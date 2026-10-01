@@ -110,11 +110,12 @@ Repoyu oluşturduktan sonra Claude'un GitHub uygulamasına bu repoya erişim ver
 ## Banka ekstresi içe aktarma
 
 Banka hareketlerini tek tek yazmak yerine:
-1. İnternet/mobil bankacılıktan **Hesap hareketleri → İndir → Excel** (ya da CSV) al. PDF okunmaz.
+1. İnternet/mobil bankacılıktan **Hesap hareketleri → İndir** ile **PDF, Excel ya da CSV** al. Şifreli e-ekstre PDF'lerinde şifre sorulur (kaydedilmez). Taranmış/fotoğraf PDF'ler okunamaz.
 2. Kasa Defteri → **İşlemler → ⇣ Ekstre içe aktar** → hesabı seç → dosyayı seç.
 3. Uygulama tarih, açıklama ve tutar sütunlarını kendisi bulur; bulamazsa "Sütun eşleştirme"den bir kez seç (o banka için hatırlanır).
 4. Listede kategorileri kontrol et → **N işlemi ekle**.
 
+- **Kredi kartı:** Kart ekstresini *kredi kartı* türündeki hesaba yükle; harcamalar otomatik gider olarak çevrilir, karta yapılan ödemeler gelir sayılmaz (bankadan karta transfer olarak gir).
 - Daha önce eklenen hareketler **"zaten eklendi"** olarak işaretlenir, tekrar eklenmez.
 - Dosyada bakiye sütunu varsa, uygulamadaki bakiye bankayla karşılaştırılır; istersen açılış bakiyesi düzeltilerek eşitlenir.
 - Bir satırın kategorisini değiştirince benzer açıklamalı satırlar da değişir; uygulama sonraki ekstrelerde bunu hatırlar.

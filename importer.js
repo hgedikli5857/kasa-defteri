@@ -37,10 +37,128 @@ export function parseCSV(text) {
   if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
   return rows;
 }
-export async function fileToRows(file) {
+/* ---------- PDF (metin tabanlı) ---------- */
+const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
+let pdfPromise = null;
+function loadPDF() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if (!pdfPromise) pdfPromise = new Promise((res, rej) => {
+    const s = document.createElement("script"); s.src = PDFJS + "pdf.min.js";
+    s.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + "pdf.worker.min.js"; res(window.pdfjsLib); };
+    s.onerror = () => { pdfPromise = null; rej(new Error("PDF okuyucu yüklenemedi. İnternet bağlantını kontrol et.")); };
+    document.head.appendChild(s);
+  });
+  return pdfPromise;
+}
+export class PdfPasswordError extends Error { constructor(wrong) { super(wrong ? "PDF şifresi yanlış." : "Bu PDF şifreli."); this.wrong = wrong; } }
+
+// Sayfadaki metin parçalarını satırlara (y) ve hücrelere (x boşlukları) ayırır
+async function pdfLines(buf, password) {
+  const pdfjs = await loadPDF();
+  let doc;
+  try { doc = await pdfjs.getDocument({ data: new Uint8Array(buf), password: password || undefined, isEvalSupported: false }).promise; }
+  catch (e) { if (e && e.name === "PasswordException") throw new PdfPasswordError(e.code === 2); throw new Error("PDF açılamadı: " + (e && e.message || "bilinmeyen hata")); }
+  const lines = [];
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const tc = await page.getTextContent();
+    const items = tc.items.filter(it => it.str && it.str.trim()).map(it => ({ s: it.str, x: it.transform[4], y: it.transform[5], w: it.width || it.str.length * 4, h: Math.abs(it.transform[3]) || 8 }));
+    items.sort((a, b) => b.y - a.y || a.x - b.x);
+    const pageLines = [];
+    for (const it of items) {
+      const L = pageLines.find(l => Math.abs(l.y - it.y) <= Math.max(2, it.h * 0.35));
+      if (L) L.items.push(it); else pageLines.push({ y: it.y, items: [it] });
+    }
+    pageLines.sort((a, b) => b.y - a.y);
+    for (const l of pageLines) {
+      l.items.sort((a, b) => a.x - b.x);
+      const cells = [];
+      for (const it of l.items) {
+        const c = cells[cells.length - 1];
+        const gap = c ? it.x - (c.x1) : 99;
+        if (c && gap < Math.max(4, it.h * 0.9)) { c.s += (gap > it.h * 0.15 ? " " : "") + it.s; c.x1 = it.x + it.w; }
+        else cells.push({ s: it.s, x0: it.x, x1: it.x + it.w });
+      }
+      cells.forEach(c => { c.s = c.s.replace(/\s+/g, " ").trim(); });
+      lines.push({ page: p, y: l.y, h: Math.max(...l.items.map(i => i.h)), cells: cells.filter(c => c.s) });
+    }
+  }
+  if (!lines.some(l => l.cells.length)) throw new Error("Bu PDF'te okunabilir metin yok (taranmış görüntü olabilir). Bankadan Excel ya da e-ekstre PDF'i indir.");
+  return lines;
+}
+// Başlık satırındaki sütun konumlarına göre tablo kurar
+function linesToTable(lines) {
+  const texts = lines.map(l => l.cells.map(c => c.s));
+  const hIdx = detectHeader(texts);
+  if (hIdx < 0) return null;
+  const head = lines[hIdx].cells;
+  const anchors = head.map(c => ({ x0: c.x0, x1: c.x1, cx: (c.x0 + c.x1) / 2 }));
+  const pick = c => { // hücreyi en çok örtüşen / en yakın başlığa ata
+    let best = 0, bestScore = -Infinity;
+    anchors.forEach((a, i) => { const ov = Math.min(a.x1, c.x1) - Math.max(a.x0, c.x0); const sc = ov > 0 ? ov : -Math.abs((c.x0 + c.x1) / 2 - a.cx); if (sc > bestScore) { bestScore = sc; best = i; } });
+    return best;
+  };
+  const rows = texts.slice(0, hIdx).map(t => t);
+  rows.push(head.map(c => c.s));
+  const meta = [];
+  for (const l of lines.slice(hIdx + 1)) {
+    const r = new Array(anchors.length).fill("");
+    for (const c of l.cells) { const i = pick(c); r[i] = r[i] ? r[i] + " " + c.s : c.s; }
+    rows.push(r); meta.push(l);
+  }
+  // çok satırlı açıklamaları önceki harekete ekle
+  const m = guessMapping(rows[hIdx], rows.slice(hIdx + 1));
+  const out = rows.slice(0, hIdx + 1);
+  let prevLine = null, prevIsTx = false, contN = 0;
+  rows.slice(hIdx + 1).forEach((r, k) => {
+    const L = meta[k], prev = out[out.length - 1];
+    const hasDate = parseDate(r[m.date]) != null;
+    const hasAmt = r.some((v, i) => i !== m.desc && v && /\d,\d{2}\b|\d\.\d{2}\b/.test(v) && parseAmount(v) != null);
+    // devam satırı: tarih/tutar yok, aynı sayfada ve bir önceki satırın hemen altında
+    const near = prevLine && L.page === prevLine.page && (prevLine.y - L.y) < Math.max(L.h, prevLine.h) * 2.4;
+    if (!hasDate && !hasAmt && prevIsTx && near && contN < 3 && m.desc >= 0) {
+      const txt = r.filter(Boolean).join(" "); if (txt) prev[m.desc] = (prev[m.desc] + " " + txt).trim(); contN++;
+    } else { out.push(r); prevIsTx = hasDate && hasAmt; contN = 0; }
+    prevLine = L;
+  });
+  return out;
+}
+// Başlık bulunamazsa: "tarih ... açıklama ... tutar [bakiye]" satırlarını yakala
+const MONEY = /[-+]?\(?\d{1,3}(?:\.\d{3})*,\d{2}\)?(?:\s*(?:TL|TRY|B|A|\+|-))?|[-+]?\d+,\d{2}(?:\s*(?:TL|TRY))?/g;
+function linesToRegexRows(lines) {
+  const rows = [["Tarih", "Açıklama", "Tutar", "Bakiye"]];
+  let lastL = null;
+  for (const l of lines) {
+    const t = l.cells.map(c => c.s).join("  ");
+    const dm = t.match(/^(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}-\d{2}-\d{2})\s+(.*)$/);
+    if (!dm) { const prev = rows[rows.length - 1]; const near = lastL && l.page === lastL.page && (lastL.y - l.y) < Math.max(l.h, lastL.h) * 2.4; if (rows.length > 1 && near && t && !(t.match(MONEY) || []).length && t.length < 120) prev[1] = (prev[1] + " " + t).trim(); lastL = null; continue; }
+    lastL = l;
+    const rest = dm[2]; const ms = [...rest.matchAll(MONEY)];
+    if (!ms.length) continue;
+    const tailStart = ms.length >= 2 && rest.slice(ms[ms.length - 2].index + ms[ms.length - 2][0].length, ms[ms.length - 1].index).trim() === "" ? ms.length - 2 : ms.length - 1;
+    const amt = ms[tailStart][0], bal = tailStart < ms.length - 1 ? ms[ms.length - 1][0] : "";
+    const desc = rest.slice(0, ms[tailStart].index).replace(/\s+/g, " ").trim();
+    rows.push([dm[1], desc, amt, bal]);
+  }
+  return rows.length > 1 ? rows : null;
+}
+async function pdfToRows(buf, password) {
+  const lines = await pdfLines(buf, password);
+  const table = linesToTable(lines);
+  if (table) {
+    const h = detectHeader(table), m = guessMapping(table[h], table.slice(h + 1));
+    if (extract(table, h, m).length) return table;
+  }
+  const rx = linesToRegexRows(lines);
+  if (rx) return rx;
+  throw new Error("PDF'te hesap hareketi tablosu bulunamadı. Bu bankanın PDF biçimini Claude'a gönder, okuyucuyu uyarlasın.");
+}
+
+export async function fileToRows(file, password) {
   const name = (file.name || "").toLowerCase();
   const buf = await file.arrayBuffer();
   const head = new Uint8Array(buf.slice(0, 8));
+  if ((head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46) || name.endsWith(".pdf")) return pdfToRows(buf, password);
   const isZip = head[0] === 0x50 && head[1] === 0x4b; // xlsx
   const isOle = head[0] === 0xd0 && head[1] === 0xcf; // eski xls
   if (isZip || isOle || /\.(xlsx|xls|ods)$/.test(name)) {
@@ -155,6 +273,7 @@ export function extract(rows, headerIdx, m) {
       if (amt != null && m.mode === "dir") { const dv = norm(r[m.dir]); if (/^(B|BORC|-|CIKIS|GIDER|HARCAMA)/.test(dv)) amt = -Math.abs(amt); else if (/^(A|ALACAK|\+|GIRIS|GELIR)/.test(dv)) amt = Math.abs(amt); }
     }
     if (!amt) continue;
+    if (m.invert) amt = -amt;
     const desc = String(r[m.desc] ?? "").replace(/\s+/g, " ").trim();
     const bal = m.balance >= 0 ? parseAmount(r[m.balance]) : null;
     out.push({ row: i, date, amount: amt, desc, balance: bal });

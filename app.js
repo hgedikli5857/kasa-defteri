@@ -739,28 +739,41 @@ function openImport(accountId) {
   const accId = accountId || (acc(ls.get("kd-imp-acc")) ? ls.get("kd-imp-acc") : S.accounts[0].id);
   imp = { accountId: accId };
   openSheet("Banka ekstresi içe aktar", `<div class="form">
-    <p style="margin:0">İnternet veya mobil bankacılıktan <b>hesap hareketlerini Excel (.xlsx/.xls) ya da CSV</b> olarak indir, sonra burada seç. Kayıtlar eklenmeden önce sana gösterilir.</p>
+    <p style="margin:0">İnternet veya mobil bankacılıktan <b>hesap hareketlerini PDF, Excel ya da CSV</b> olarak indir, sonra burada seç. Kayıtlar eklenmeden önce sana gösterilir.</p>
     <label>Hangi hesabın ekstresi?<select id="imp-acc">${accOpts(accId)}</select></label>
     <button class="btn primary" type="button" data-act="imp-pick" style="justify-content:center;padding:12px">Dosya seç</button>
-    <input type="file" id="stmtFile" accept=".xlsx,.xls,.csv,.txt,.ods,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" hidden>
+    <input type="file" id="stmtFile" accept=".pdf,.xlsx,.xls,.csv,.txt,.ods,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" hidden>
     <details class="small-note"><summary>Ekstreyi nereden indiririm?</summary>
-      <p>Çoğu bankada: <b>Hesaplarım → hesabı seç → Hesap hareketleri → tarih aralığı → İndir / Excel</b>. Mobil uygulamada bulamazsan internet şubesinden indir. PDF ekstreler okunamaz; Excel ya da CSV seç.</p></details>
+      <p>Çoğu bankada: <b>Hesaplarım → hesabı seç → Hesap hareketleri → tarih aralığı → İndir / Excel</b>. Mobil uygulamada bulamazsan internet şubesinden indir. PDF de olur; taranmış (fotoğraf) PDF'ler okunamaz. Şifreli PDF'te şifre sorulur.</p></details>
   </div>`);
 }
-async function readStatement(file) {
+async function readStatement(file, password) {
   try {
     toast("Dosya okunuyor…");
-    const rows = await IMP.fileToRows(file);
+    imp.file = file;
+    const rows = await IMP.fileToRows(file, password);
     if (!rows || !rows.length) { toast("Dosyada okunabilir satır yok."); return; }
     let hIdx = IMP.detectHeader(rows);
     if (hIdx < 0) hIdx = 0;
     const headers = (rows[hIdx] || []).map(h => String(h ?? "").trim());
     const sig = IMP.headerSignature(headers);
     let map = null; try { map = JSON.parse(ls.get("kd-map:" + sig) || "null"); } catch (e) { }
-    if (!map) map = IMP.guessMapping(headers, rows.slice(hIdx + 1));
+    if (!map) { map = IMP.guessMapping(headers, rows.slice(hIdx + 1)); const ex = IMP.extract(rows, hIdx, map); if (acc(imp.accountId)?.kind === "kredi kartı" && ex.length && ex.filter(x => x.amount > 0).length > ex.length * 0.6) map.invert = true; }
     Object.assign(imp, { fileName: file.name, rows, hIdx, headers, sig, map, fixOpening: false });
     buildImpItems(); clearTimeout(tt); $("#toastRoot").innerHTML = ""; renderImport();
-  } catch (e) { toast((e && e.message) || "Dosya okunamadı."); }
+  } catch (e) {
+    if (e instanceof IMP.PdfPasswordError) { clearTimeout(tt); $("#toastRoot").innerHTML = ""; return askPdfPassword(e.wrong); }
+    toast((e && e.message) || "Dosya okunamadı.");
+  }
+}
+function askPdfPassword(wrong) {
+  openSheet("Şifreli PDF", `<form class="form" id="pdfPwForm" data-kind="pdfpw">
+    <p style="margin:0">Bu ekstre şifreli. Bankanın e-ekstre şifresini gir. Genellikle T.C. kimlik numaranın bir kısmı ya da doğum tarihindir; bankanın e-postasında yazar.</p>
+    ${wrong ? `<p class="neg" style="margin:0">Şifre yanlış, tekrar dene.</p>` : ""}
+    <label>PDF şifresi<input id="pdf-pw" type="password" autocomplete="off" required></label>
+    <p class="small-note" style="margin:0">Şifre sadece bu dosyayı açmak için kullanılır; hiçbir yere kaydedilmez.</p>
+    <div class="foot"><span></span><div class="r"><button type="button" class="btn" data-close>Vazgeç</button><button class="btn primary" type="submit">Aç</button></div></div></form>`);
+  setTimeout(() => $("#pdf-pw")?.focus(), 50);
 }
 function buildImpItems() {
   const ext = IMP.extract(imp.rows, imp.hIdx, imp.map);
@@ -782,6 +795,10 @@ function buildImpItems() {
     const exact = keys.has(key);
     const maybe = !exact && S.txns.some(t => t.accountId === imp.accountId && t.date === x.date && t.type === type && Math.abs(t.amount - amt) < 0.01);
     const D = IMP.up(x.desc), ct = contacts.find(c => D.includes(c.n));
+    const isCard = acc(imp.accountId)?.kind === "kredi kartı";
+    if (isCard && x.amount > 0 && /ODEME|ÖDEME|TESEKKUR|TEŞEKKÜR|PAYMENT|HESAPTAN/i.test(IMP.up(x.desc))) {
+      return { ...x, key, type, amt, dup: "kart", sel: false, cat: "Diğer gelir", contactId: "" };
+    }
     let cat = IMP.guessCategory(x.desc, x.amount, learned);
     if (ct && /^Diğer/.test(cat) && byContact[ct.id + "|" + type]) cat = byContact[ct.id + "|" + type];
     return { ...x, key, type, amt, dup: exact ? "var" : maybe ? "olası" : "", sel: !exact && !maybe, cat, contactId: ct ? ct.id : "" };
@@ -805,7 +822,7 @@ function renderImport() {
   const dates = items.map(x => x.date).sort();
   const bi = impBalanceInfo();
   const cats = ALLCATS();
-  const dupN = items.filter(x => x.dup).length;
+  const dupN = items.filter(x => x.dup && x.dup !== "kart").length;
   const body = `<div class="form" id="impPanel">
     <p style="margin:0"><b>${esc(imp.fileName)}</b> · ${esc(acc(imp.accountId)?.name || "")}<br><span class="muted" style="font-size:.88rem">${items.length ? `${items.length} hareket bulundu · ${dshort(dates[0])} – ${dshort(dates[dates.length - 1])}` : "Hareket bulunamadı. Aşağıdan sütunları kontrol et."}${dupN ? ` · ${dupN} tanesi zaten kayıtlı olabilir` : ""}</span></p>
     <details ${items.length ? "" : "open"}><summary style="cursor:pointer;font-weight:600">Sütun eşleştirme ${items.length ? `<span class="pill pos">otomatik bulundu</span>` : `<span class="pill warn">kontrol et</span>`}</summary>
@@ -816,6 +833,7 @@ function renderImport() {
         <label>Tutar biçimi<select id="imp-mode">${opt([["signed", "Tek sütun (+ / −)"], ["split", "Ayrı Borç ve Alacak sütunları"], ["dir", "Tutar + Borç/Alacak (B/A) sütunu"]], m.mode)}</select></label></div>
         <div class="f2">${m.mode === "split" ? `<label>Borç (çıkan)<select id="imp-debit">${colOpts(m.debit)}</select></label><label>Alacak (giren)<select id="imp-credit">${colOpts(m.credit)}</select></label>`
       : `<label>Tutar<select id="imp-amount">${colOpts(m.amount)}</select></label>${m.mode === "dir" ? `<label>B/A sütunu<select id="imp-dir">${colOpts(m.dir)}</select></label>` : `<label>Bakiye (isteğe bağlı)<select id="imp-bal">${colOpts(m.balance)}</select></label>`}`}</div>
+        <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="imp-inv" style="width:auto" ${m.invert ? "checked" : ""}> Gelir ve giderleri ters çevir <span class="muted">(kredi kartı ekstrelerinde harcamalar artı görünüyorsa)</span></label>
         <p class="small-note" style="margin:0">Bu eşleştirme bu bankanın dosyaları için hatırlanır.</p>
       </div></details>
     ${bi ? `<div class="notice ${Math.abs(bi.diff) < 0.01 ? "" : "warn"}" style="margin:0"><span>${Math.abs(bi.diff) < 0.01 ? `<b>Bakiye tutuyor.</b> Bankadaki bakiye (${dshort(bi.date)}) ile uygulamadaki bakiye aynı: <b class="num">${money(bi.bank)}</b>` : `<b>Bakiye farkı var.</b> Bankada <b class="num">${money(bi.bank)}</b>, içe aktarma sonrası uygulamada <b class="num">${money(bi.after)}</b> olacak (fark ${signed(bi.diff)}).<br><label style="display:flex;gap:8px;align-items:center;margin-top:6px;color:var(--ink);font-size:.9rem"><input type="checkbox" id="imp-fix" style="width:auto" ${imp.fixOpening ? "checked" : ""}> Açılış bakiyesini düzelterek eşitle (${money((+acc(imp.accountId).opening || 0) + bi.diff)})</label>`}</span></div>` : ""}
@@ -826,7 +844,7 @@ function renderImport() {
       ${items.slice(0, 600).map((x, i) => `<div class="row" style="grid-template-columns:auto minmax(0,1fr) auto;opacity:${x.sel ? 1 : .55}">
         <input type="checkbox" class="imp-sel" data-i="${i}" ${x.sel ? "checked" : ""} style="width:auto" aria-label="Seç">
         <div style="min-width:0"><div class="t" style="font-size:.9rem;font-weight:500">${esc(x.desc || "(açıklama yok)")}</div>
-          <div class="m">${dshort(x.date)}${x.dup ? ` · <span class="${x.dup === "var" ? "neg" : ""}" style="color:var(--warn)">${x.dup === "var" ? "zaten eklendi" : "olası tekrar"}</span>` : ""}${x.contactId ? ` · ${esc(con(x.contactId)?.name || "")}` : ""}</div>
+          <div class="m">${dshort(x.date)}${x.dup ? ` · <span style="color:var(--warn)">${x.dup === "var" ? "zaten eklendi" : x.dup === "kart" ? "kart ödemesi: gelir değil, bankadan karta transfer olarak gir" : "olası tekrar"}</span>` : ""}${x.contactId ? ` · ${esc(con(x.contactId)?.name || "")}` : ""}</div>
           <select class="imp-cat" data-i="${i}" style="margin-top:4px;padding:4px 6px;font-size:.82rem;width:auto;max-width:100%">${cats.map(c => `<option ${c === x.cat ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></div>
         <div class="amt ${x.amount > 0 ? "pos" : "neg"}" style="font-size:.92rem">${x.amount > 0 ? "+" : "−"}${money(x.amt)}</div></div>`).join("")}
     </div>${items.length > 600 ? `<p class="small-note">İlk 600 satır gösteriliyor; hepsi eklenecek.</p>` : ""}` : ""}
@@ -842,6 +860,7 @@ function impMapChanged() {
   const h = g("#imp-h"); if (h && h - 1 !== imp.hIdx && h >= 1 && h <= imp.rows.length) { imp.hIdx = h - 1; imp.headers = (imp.rows[imp.hIdx] || []).map(x => String(x ?? "").trim()); imp.sig = IMP.headerSignature(imp.headers); Object.assign(m, IMP.guessMapping(imp.headers, imp.rows.slice(imp.hIdx + 1))); }
   else {
     for (const [id, k] of [["#imp-date", "date"], ["#imp-desc", "desc"], ["#imp-amount", "amount"], ["#imp-debit", "debit"], ["#imp-credit", "credit"], ["#imp-dir", "dir"], ["#imp-bal", "balance"]]) { const v = g(id); if (v !== undefined) m[k] = v; }
+    const inv = $("#imp-inv"); if (inv) m.invert = inv.checked;
     const mode = $("#imp-mode")?.value; if (mode && mode !== m.mode) { m.mode = mode; if (mode === "split") { m.debit = m.debit >= 0 ? m.debit : m.amount; } }
   }
   buildImpItems(); renderImport();
@@ -972,7 +991,11 @@ document.addEventListener("click", async e => {
     return;
   }
 });
-document.addEventListener("submit", e => { e.preventDefault(); submitForm(e.target); });
+document.addEventListener("submit", e => {
+  e.preventDefault();
+  if (e.target.dataset.kind === "pdfpw") { const pw = $("#pdf-pw").value; if (imp && imp.file) { closeSheet(); readStatement(imp.file, pw); } return; }
+  submitForm(e.target);
+});
 document.addEventListener("input", e => { if (e.target.id === "fq") { ui.q = e.target.value; ui._focusQ = true; render(); } });
 document.addEventListener("change", async e => {
   if (e.target.id === "ftype") { ui.ftype = e.target.value; render(); }
