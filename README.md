@@ -1,0 +1,127 @@
+# Kasa Defteri — Kurulum Rehberi
+
+Gelir, gider, banka hesapları, cariler, vadeler ve nakit akışını tek yerden yöneten, telefona yüklenebilen web uygulaması (PWA).
+
+- **Giriş:** Google hesabı (Firebase Authentication)
+- **Veri:** Firebase Firestore. Tüm cihazlarda anlık senkron, internet yokken de çalışır.
+- **Yedek:** Google Drive'daki `Kasa Defteri Yedek/kasa-defteri-veri.json` dosyası (otomatik)
+- **Yayın:** GitHub Pages → `https://hgedikli5857.github.io/kasa-defteri/`
+
+Toplam süre: **yaklaşık 30 dakika**. Hepsi ücretsiz.
+
+---
+
+## Dosyalar
+
+| Dosya | Ne işe yarar |
+|---|---|
+| `index.html` | Uygulamanın sayfası |
+| `app.js` | Uygulamanın tüm mantığı |
+| `styles.css` | Görünüm |
+| `firebase-config.js` | **Senin dolduracağın** Firebase ayarları |
+| `firestore.rules` | Veritabanı güvenlik kuralları (Firebase'e yapıştırılacak) |
+| `manifest.webmanifest`, `sw.js`, `icons/` | Telefona yüklenebilme ve internetsiz çalışma |
+
+> `firebase-config.js` doldurulmadan açarsan uygulama **deneme modunda** çalışır: örnek verilerle dener, kayıtları yalnızca o cihazda tutar.
+
+---
+
+## ADIM 1 — Firebase projesi (≈15 dk)
+
+### 1.1 Projeyi oluştur
+1. **console.firebase.google.com** adresine Google hesabınla gir.
+2. **Proje oluştur** → ad: `kasa-defteri` → Devam.
+3. Google Analytics: **kapalı** bırak → **Proje oluştur**.
+
+### 1.2 Web uygulamasını ekle ve ayarları al
+1. Proje ana sayfasında **`</>`** (Web) simgesine tıkla.
+2. Uygulama takma adı: `Kasa Defteri`. "Firebase Hosting" kutusunu **işaretleme** → **Uygulamayı kaydet**.
+3. Ekranda `const firebaseConfig = { ... }` görünecek. İçindeki 6 değeri kopyala.
+4. `firebase-config.js` dosyasını aç ve aynı alanlara yapıştır:
+   ```js
+   export const firebaseConfig = {
+     apiKey: "AIza....",
+     authDomain: "kasa-defteri-xxxx.firebaseapp.com",
+     projectId: "kasa-defteri-xxxx",
+     storageBucket: "kasa-defteri-xxxx.firebasestorage.app",
+     messagingSenderId: "1234567890",
+     appId: "1:1234567890:web:abcd..."
+   };
+   ```
+   > Bu değerler gizli değildir. Herkes görebilir; verini **Firestore kuralları** korur (Adım 1.4).
+
+### 1.3 Google ile girişi aç
+1. Sol menü → **Derleme (Build) → Authentication** → **Başlayın**.
+2. **Oturum açma yöntemi** sekmesi → **Google** → **Etkinleştir**.
+3. "Proje destek e-postası" olarak kendi Gmail adresini seç → **Kaydet**.
+4. **Ayarlar** sekmesi → **Yetkili alan adları** → **Alan adı ekle** → `hgedikli5857.github.io` → **Ekle**.
+
+### 1.4 Veritabanını oluştur ve kilitle
+1. Sol menü → **Derleme → Firestore Database** → **Veritabanı oluştur**.
+2. Konum: **eur3 (Europe)** veya **europe-west** seç (Türkiye'ye en yakın).
+3. **Üretim modunda başlat** → **Oluştur**.
+4. Üstteki **Kurallar** sekmesine geç. Oradaki her şeyi sil, `firestore.rules` dosyasının **tamamını** yapıştır → **Yayınla**.
+
+> ⚠️ Bu adımı atlama. Kurallar herkesin yalnızca kendi verisini görmesini sağlar.
+
+### 1.5 Google Drive yedeğini aç
+1. **console.cloud.google.com** → üstte proje olarak `kasa-defteri-xxxx` seçili olsun (Firebase projesiyle aynıdır).
+2. **API'ler ve Hizmetler → Kitaplık** → "**Google Drive API**" ara → **Etkinleştir**.
+3. **API'ler ve Hizmetler → OAuth izin ekranı** (yeni arayüzde **Google Auth Platform**):
+   - **Kitle (Audience)** bölümünde yayın durumu **"Test ediliyor"** ise **Uygulamayı yayınla** de. Ya da **Test kullanıcıları**na kendi Gmail adresini ekle.
+   - Uygulama yalnızca kendi oluşturduğu Drive dosyalarına eriştiği (`drive.file`) için Google doğrulaması gerekmez.
+
+---
+
+## ADIM 2 — GitHub'a yükle (≈10 dk)
+
+### Yol A: Tarayıcıdan yükleme (en kolayı)
+1. **github.com/new** → Repository name: `kasa-defteri` → **Public** → **Create repository**.
+2. Açılan sayfada **"uploading an existing file"** bağlantısına tıkla.
+3. Bu klasördeki **tüm dosyaları ve `icons` klasörünü** sürükle-bırak yap. (`firebase-config.js` doldurulmuş olmalı.)
+4. **Commit changes**.
+
+### Yol B: Claude'a yükletme
+Repoyu oluşturduktan sonra Claude'un GitHub uygulamasına bu repoya erişim ver: GitHub → **Settings → Applications → Installed GitHub Apps → Claude → Configure → Repository access** → `kasa-defteri` ekle → Save. Sonra Claude'a "yükle" demen yeterli.
+
+---
+
+## ADIM 3 — GitHub Pages'te yayınla (≈2 dk)
+
+1. Repo sayfasında **Settings → Pages**.
+2. **Source:** `Deploy from a branch` → Branch: **`main`**, klasör: **`/ (root)`** → **Save**.
+3. 1–2 dakika bekle. Adres: **https://hgedikli5857.github.io/kasa-defteri/**
+
+---
+
+## İlk açılış ve kontrol listesi
+
+1. Adresi aç → **Google ile giriş yap** → hesabını seç. Drive izni istendiğinde **izin ver**.
+2. Boş defter ekranı gelir. Seçenekler:
+   - **Yedek dosyasından yükle:** Claude'daki Kasa Defteri'nin verilerini taşımak için. Önce Drive'ındaki **Kasa Defteri** klasöründen `kasa-defteri-veri.json` dosyasını indir, sonra bunu seç.
+   - **Örnek verilerle dene** ya da **İlk hesabını ekle.**
+3. Başlıkta şunları gör:
+   - **"Canlı senkron"** etiketi
+   - Bir değişiklik yaptıktan 5 saniye sonra **"Drive · saat"** etiketi
+4. **Telefona yükle:** Android'de Chrome ile adresi aç → menü (⋮) → **Uygulamayı yükle** veya **Ana ekrana ekle**. Uygulama içinde **Yükle** düğmesi de çıkar.
+
+---
+
+## Sorun giderme
+
+| Belirti | Çözüm |
+|---|---|
+| "Bu adres Firebase'de yetkili değil" | Adım 1.3/4: `hgedikli5857.github.io` yetkili alan adlarına eklenmeli |
+| "Google ile giriş Firebase'de açık değil" | Adım 1.3/2: Google sağlayıcısını etkinleştir |
+| "Bu işlem için yetkin yok" | Adım 1.4/4: Kurallar yayınlanmamış veya eksik yapıştırılmış |
+| Drive etiketi "izin gerekli" | Normal. Google Drive iznini güvenlik için 1 saatte bir yeniletiyor. Etikete dokun → **Drive iznini yenile ve kaydet** |
+| Drive "erişim reddedildi" | Adım 1.5/2: Google Drive API etkin değil |
+| Değişiklik yaptım ama telefonda eski sürüm açılıyor | `sw.js` içindeki `VERSION` değerini artır (`kd-v2`), dosyayı yeniden yükle, uygulamayı iki kez kapat-aç |
+| Sayfa beyaz kalıyor | Tarayıcıda sayfayı yenile; olmazsa `firebase-config.js` içinde tırnak/virgül hatası olabilir |
+
+---
+
+## Güvenlik notları
+- Verin Firestore'da `users/<senin-kimliğin>/...` altında durur. Kurallar başka kimsenin okumasına izin vermez.
+- Drive izni `drive.file` kapsamındadır: uygulama Drive'ındaki **diğer dosyaları göremez**, sadece kendi oluşturduğu yedek dosyasına erişir.
+- Firebase'in ücretsiz planı (günlük 50.000 okuma / 20.000 yazma) kişisel kullanım için fazlasıyla yeterli.

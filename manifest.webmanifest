@@ -1,0 +1,22 @@
+{
+  "name": "Kasa Defteri",
+  "short_name": "Kasa Defteri",
+  "description": "Gelir, gider, banka hesapları, cariler, vadeler ve nakit akışı tek yerde.",
+  "lang": "tr",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#F2F4F8",
+  "theme_color": "#2B47D4",
+  "categories": ["finance", "business", "productivity"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Vadeler", "url": "./?tab=vadeler", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Kasa Defteri</title>
+<meta name="description" content="Gelir, gider, banka hesapları, cariler, vadeler ve nakit akışı tek yerde.">
+<meta name="theme-color" content="#2B47D4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0C1120" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="loginRoot" hidden></div>
+<div id="appRoot" hidden>
+  <header class="top">
+    <div class="wrap">
+      <div class="brand">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><h1><span class="mark">₺</span>Kasa Defteri</h1><div class="chips" id="chips"></div></div>
+        <div class="netpos"><small>Net pozisyon</small><b id="netpos" class="num">—</b>
+          <button class="btn primary" id="addBtn" type="button">+ Yeni kayıt</button></div>
+      </div>
+      <nav class="tabs" id="tabs" role="tablist"></nav>
+    </div>
+  </header>
+  <div class="wrap" id="noticeBox"></div>
+  <main class="wrap" id="view"></main>
+</div>
+<div id="sheetRoot"></div>
+<div id="toastRoot"></div>
+<input type="file" id="importFile" accept="application/json,.json" hidden>
+<noscript><p style="padding:16px">Kasa Defteri'ni kullanmak için JavaScript'i aç.</p></noscript>
+<script type="module" src="app.js"></script>
+</body>
+</html>

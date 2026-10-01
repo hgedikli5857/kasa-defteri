@@ -1,0 +1,20 @@
+rules_version = '2';
+// Kasa Defteri — herkes yalnızca kendi verisini okur ve yazar.
+// Firebase konsolu → Firestore Database → Kurallar sekmesine bu dosyanın tamamını yapıştırıp "Yayınla"ya bas.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      match /{collection}/{docId} {
+        allow read, delete: if request.auth != null && request.auth.uid == userId;
+        allow create, update: if request.auth != null && request.auth.uid == userId
+          && collection in ['accounts', 'contacts', 'txns', 'plans']
+          && request.resource.size() < 60;
+      }
+    }
+    // Başka her yol kapalı
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
