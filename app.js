@@ -1,6 +1,7 @@
 // Kasa Defteri — PWA sürümü
 // Veri: Firebase Firestore (anlık senkron + çevrimdışı), giriş: Google (Firebase Auth), yedek: Google Drive (drive.file)
 import { firebaseConfig } from "./firebase-config.js";
+import * as IMP from "./importer.js";
 
 const FB = "https://www.gstatic.com/firebasejs/10.14.1/";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
@@ -35,7 +36,7 @@ const ls = { get(k) { try { return localStorage.getItem(k); } catch (e) { return
 
 const CATS = {
   gelir: ["Satış", "Hizmet geliri", "Danışmanlık", "Komisyon", "Faiz geliri", "Diğer gelir"],
-  gider: ["Kira", "Personel", "Faturalar", "Lojistik", "Pazarlama", "Vergi / SGK", "Yazılım", "Ofis", "Ulaşım", "Banka masrafı", "Diğer gider"]
+  gider: ["Kira", "Personel", "Faturalar", "Lojistik", "Pazarlama", "Vergi / SGK", "Yazılım", "Ofis", "Ulaşım", "Market / Gıda", "Banka masrafı", "Diğer gider"]
 };
 const COLS = ["accounts", "contacts", "txns", "plans"];
 const configured = firebaseConfig && firebaseConfig.apiKey && !/^BURAYA/.test(firebaseConfig.apiKey);
@@ -495,7 +496,7 @@ function viewIslemler() {
       <div class="amt ${sg > 0 ? "pos" : sg < 0 ? "neg" : "muted"}">${sg > 0 ? "+" : sg < 0 ? "−" : "⇄ "}${money(t.amount)}</div></div>`;
   }
   return `<section class="panel"><div class="ph"><div><h2>İşlemler</h2><p>${rows.length} kayıt · <span class="pos">${money(inc)}</span> gelir · <span class="neg">${money(exp)}</span> gider</p></div>
-    <button class="btn primary" data-act="new-txn">+ İşlem</button></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="import-stmt">⇣ Ekstre içe aktar</button><button class="btn primary" data-act="new-txn">+ İşlem</button></div></div>
     <div class="filters"><input id="fq" type="search" placeholder="Ara: kategori, cari, not, tutar" value="${esc(ui.q)}" aria-label="İşlemlerde ara">
     <select id="ftype" aria-label="Tür"><option value="">Tüm türler</option>${["gelir", "gider", "transfer"].map(x => `<option value="${x}" ${ui.ftype === x ? "selected" : ""}>${x[0].toLocaleUpperCase("tr") + x.slice(1)}</option>`).join("")}</select>
     <select id="facc" aria-label="Hesap"><option value="">Tüm hesaplar</option>${S.accounts.map(a => `<option value="${esc(a.id)}" ${ui.facc === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></div>
@@ -529,7 +530,7 @@ function viewVadeler() {
 function viewHesaplar() {
   const total = totalCash();
   return `<section class="panel"><div class="ph"><div><h2>Banka ve kasa hesapları</h2><p>Toplam <b class="num">${money(total)}</b></p></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="new-transfer">⇄ Transfer</button><button class="btn primary" data-act="new-account">+ Hesap</button></div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="import-stmt">⇣ Ekstre</button><button class="btn" data-act="new-transfer">⇄ Transfer</button><button class="btn primary" data-act="new-account">+ Hesap</button></div></div>
     <div class="cards">${S.accounts.map(a => {
     const b = balanceOf(a), tx = S.txns.filter(t => t.accountId === a.id || t.toAccountId === a.id), last = tx.reduce((m, t) => t.date > m ? t.date : m, "");
     const sh = total > 0 && b > 0 ? Math.round(b / total * 100) : 0;
@@ -701,7 +702,7 @@ function completeForm(p) {
     <div class="foot"><span></span><div class="r"><button type="button" class="btn" data-close>Vazgeç</button><button class="btn primary" type="submit">Kaydet</button></div></div></form>`);
 }
 function newMenu() {
-  openSheet("Ne eklemek istiyorsun?", `<div class="form" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">${[["new-gelir", "Gelir", "Satış, hizmet, faiz"], ["new-gider", "Gider", "Kira, fatura, maaş"], ["new-transfer", "Transfer", "Hesaplar arası para aktarımı"], ["new-plan", "Vade", "Yaklaşan ödeme veya tahsilat"], ["new-contact", "Cari", "Müşteri veya tedarikçi"], ["new-account", "Hesap", "Banka, kasa, kredi kartı"]].map(([a, t, s]) => `<button class="acard" data-act="${a}" type="button"><b>${t}</b><span class="muted" style="font-size:.84rem">${s}</span></button>`).join("")}</div>`);
+  openSheet("Ne eklemek istiyorsun?", `<div class="form" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">${[["new-gelir", "Gelir", "Satış, hizmet, faiz"], ["new-gider", "Gider", "Kira, fatura, maaş"], ["new-transfer", "Transfer", "Hesaplar arası para aktarımı"], ["new-plan", "Vade", "Yaklaşan ödeme veya tahsilat"], ["new-contact", "Cari", "Müşteri veya tedarikçi"], ["new-account", "Hesap", "Banka, kasa, kredi kartı"], ["import-stmt", "Ekstre", "Bankadan indirilen Excel/CSV"]].map(([a, t, s]) => `<button class="acard" data-act="${a}" type="button"><b>${t}</b><span class="muted" style="font-size:.84rem">${s}</span></button>`).join("")}</div>`);
 }
 function accountPanel() {
   if (mode === "demo") {
@@ -728,6 +729,137 @@ function drivePanel() {
     </div>
     <p class="muted" style="margin:0;font-size:.82rem">Google, güvenlik gereği Drive iznini 1 saatte bir yeniletir. İzin dolduğunda kayıtların yine telefonda ve bulutta (Firebase) güvende; sadece Drive kopyası bir sonraki yenilemeye kadar bekler.</p></div>`;
   if ($("#drivePanel")) $("#drivePanel").outerHTML = body; else openSheet("Google Drive yedeği", body);
+}
+
+/* ---------- banka ekstresi içe aktarma ---------- */
+let imp = null;
+const ALLCATS = () => [...new Set([...CATS.gelir, ...CATS.gider, ...S.txns.map(t => t.category).filter(c => c && c !== "Transfer")])];
+function openImport(accountId) {
+  if (!S.accounts.length) { toast("Önce bankan için bir hesap ekle."); return accountForm(); }
+  const accId = accountId || (acc(ls.get("kd-imp-acc")) ? ls.get("kd-imp-acc") : S.accounts[0].id);
+  imp = { accountId: accId };
+  openSheet("Banka ekstresi içe aktar", `<div class="form">
+    <p style="margin:0">İnternet veya mobil bankacılıktan <b>hesap hareketlerini Excel (.xlsx/.xls) ya da CSV</b> olarak indir, sonra burada seç. Kayıtlar eklenmeden önce sana gösterilir.</p>
+    <label>Hangi hesabın ekstresi?<select id="imp-acc">${accOpts(accId)}</select></label>
+    <button class="btn primary" type="button" data-act="imp-pick" style="justify-content:center;padding:12px">Dosya seç</button>
+    <input type="file" id="stmtFile" accept=".xlsx,.xls,.csv,.txt,.ods,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" hidden>
+    <details class="small-note"><summary>Ekstreyi nereden indiririm?</summary>
+      <p>Çoğu bankada: <b>Hesaplarım → hesabı seç → Hesap hareketleri → tarih aralığı → İndir / Excel</b>. Mobil uygulamada bulamazsan internet şubesinden indir. PDF ekstreler okunamaz; Excel ya da CSV seç.</p></details>
+  </div>`);
+}
+async function readStatement(file) {
+  try {
+    toast("Dosya okunuyor…");
+    const rows = await IMP.fileToRows(file);
+    if (!rows || !rows.length) { toast("Dosyada okunabilir satır yok."); return; }
+    let hIdx = IMP.detectHeader(rows);
+    if (hIdx < 0) hIdx = 0;
+    const headers = (rows[hIdx] || []).map(h => String(h ?? "").trim());
+    const sig = IMP.headerSignature(headers);
+    let map = null; try { map = JSON.parse(ls.get("kd-map:" + sig) || "null"); } catch (e) { }
+    if (!map) map = IMP.guessMapping(headers, rows.slice(hIdx + 1));
+    Object.assign(imp, { fileName: file.name, rows, hIdx, headers, sig, map, fixOpening: false });
+    buildImpItems(); clearTimeout(tt); $("#toastRoot").innerHTML = ""; renderImport();
+  } catch (e) { toast((e && e.message) || "Dosya okunamadı."); }
+}
+function buildImpItems() {
+  const ext = IMP.extract(imp.rows, imp.hIdx, imp.map);
+  const learned = {};
+  const byContact = {};
+  S.txns.slice().sort((a, b) => a.date < b.date ? -1 : 1).forEach(t => {
+    if (t.type === "transfer" || !t.category) return;
+    if (t.note) learned[IMP.learnKey(t.note)] = t.category;
+    if (t.contactId) byContact[t.contactId + "|" + t.type] = t.category;
+  });
+  const keys = new Set(S.txns.map(t => t.importKey).filter(Boolean));
+  const occ = {};
+  const contacts = S.contacts.filter(c => c.name && c.name.length >= 4).map(c => ({ id: c.id, n: IMP.up(c.name) }));
+  imp.items = ext.map(x => {
+    const base = `${imp.accountId}|${x.date}|${x.amount}|${IMP.learnKey(x.desc)}`;
+    occ[base] = (occ[base] || 0) + 1;
+    const key = base + "|" + occ[base];
+    const type = x.amount > 0 ? "gelir" : "gider", amt = Math.abs(x.amount);
+    const exact = keys.has(key);
+    const maybe = !exact && S.txns.some(t => t.accountId === imp.accountId && t.date === x.date && t.type === type && Math.abs(t.amount - amt) < 0.01);
+    const D = IMP.up(x.desc), ct = contacts.find(c => D.includes(c.n));
+    let cat = IMP.guessCategory(x.desc, x.amount, learned);
+    if (ct && /^Diğer/.test(cat) && byContact[ct.id + "|" + type]) cat = byContact[ct.id + "|" + type];
+    return { ...x, key, type, amt, dup: exact ? "var" : maybe ? "olası" : "", sel: !exact && !maybe, cat, contactId: ct ? ct.id : "" };
+  });
+}
+function impBalanceInfo() {
+  const it = imp.items.filter(x => x.balance != null); if (!it.length) return null;
+  const desc = it.length > 1 && it[0].date > it[it.length - 1].date;
+  const maxD = it.reduce((m, x) => x.date > m ? x.date : m, "");
+  const sameDay = it.filter(x => x.date === maxD);
+  const latest = desc ? sameDay[0] : sameDay[sameDay.length - 1];
+  const a = acc(imp.accountId); if (!a) return null;
+  const after = balanceOf(a) + sum(imp.items.filter(x => x.sel), x => x.amount);
+  return { bank: latest.balance, after, diff: Math.round((latest.balance - after) * 100) / 100, date: latest.date };
+}
+function renderImport() {
+  const m = imp.map, H = imp.headers;
+  const colOpts = (sel, blank) => `<option value="-1">${blank || "— yok —"}</option>` + H.map((h, i) => `<option value="${i}" ${+sel === i ? "selected" : ""}>${esc(h || `Sütun ${i + 1}`)}</option>`).join("");
+  const items = imp.items, sel = items.filter(x => x.sel);
+  const inc = sum(sel.filter(x => x.amount > 0), x => x.amount), exp = sum(sel.filter(x => x.amount < 0), x => -x.amount);
+  const dates = items.map(x => x.date).sort();
+  const bi = impBalanceInfo();
+  const cats = ALLCATS();
+  const dupN = items.filter(x => x.dup).length;
+  const body = `<div class="form" id="impPanel">
+    <p style="margin:0"><b>${esc(imp.fileName)}</b> · ${esc(acc(imp.accountId)?.name || "")}<br><span class="muted" style="font-size:.88rem">${items.length ? `${items.length} hareket bulundu · ${dshort(dates[0])} – ${dshort(dates[dates.length - 1])}` : "Hareket bulunamadı. Aşağıdan sütunları kontrol et."}${dupN ? ` · ${dupN} tanesi zaten kayıtlı olabilir` : ""}</span></p>
+    <details ${items.length ? "" : "open"}><summary style="cursor:pointer;font-weight:600">Sütun eşleştirme ${items.length ? `<span class="pill pos">otomatik bulundu</span>` : `<span class="pill warn">kontrol et</span>`}</summary>
+      <div class="form" style="margin-top:10px">
+        <div class="f2"><label>Başlık satırı<input id="imp-h" type="number" min="1" max="${imp.rows.length}" value="${imp.hIdx + 1}"></label>
+        <label>Tarih<select id="imp-date">${colOpts(m.date)}</select></label></div>
+        <div class="f2"><label>Açıklama<select id="imp-desc">${colOpts(m.desc)}</select></label>
+        <label>Tutar biçimi<select id="imp-mode">${opt([["signed", "Tek sütun (+ / −)"], ["split", "Ayrı Borç ve Alacak sütunları"], ["dir", "Tutar + Borç/Alacak (B/A) sütunu"]], m.mode)}</select></label></div>
+        <div class="f2">${m.mode === "split" ? `<label>Borç (çıkan)<select id="imp-debit">${colOpts(m.debit)}</select></label><label>Alacak (giren)<select id="imp-credit">${colOpts(m.credit)}</select></label>`
+      : `<label>Tutar<select id="imp-amount">${colOpts(m.amount)}</select></label>${m.mode === "dir" ? `<label>B/A sütunu<select id="imp-dir">${colOpts(m.dir)}</select></label>` : `<label>Bakiye (isteğe bağlı)<select id="imp-bal">${colOpts(m.balance)}</select></label>`}`}</div>
+        <p class="small-note" style="margin:0">Bu eşleştirme bu bankanın dosyaları için hatırlanır.</p>
+      </div></details>
+    ${bi ? `<div class="notice ${Math.abs(bi.diff) < 0.01 ? "" : "warn"}" style="margin:0"><span>${Math.abs(bi.diff) < 0.01 ? `<b>Bakiye tutuyor.</b> Bankadaki bakiye (${dshort(bi.date)}) ile uygulamadaki bakiye aynı: <b class="num">${money(bi.bank)}</b>` : `<b>Bakiye farkı var.</b> Bankada <b class="num">${money(bi.bank)}</b>, içe aktarma sonrası uygulamada <b class="num">${money(bi.after)}</b> olacak (fark ${signed(bi.diff)}).<br><label style="display:flex;gap:8px;align-items:center;margin-top:6px;color:var(--ink);font-size:.9rem"><input type="checkbox" id="imp-fix" style="width:auto" ${imp.fixOpening ? "checked" : ""}> Açılış bakiyesini düzelterek eşitle (${money((+acc(imp.accountId).opening || 0) + bi.diff)})</label>`}</span></div>` : ""}
+    ${items.length ? `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+      <label style="display:flex;gap:8px;align-items:center;font-size:.88rem"><input type="checkbox" id="imp-all" style="width:auto" ${sel.length === items.length ? "checked" : ""}> Tümünü seç</label>
+      <span class="num" style="font-size:.88rem"><span class="pos">+${money(inc)}</span> · <span class="neg">−${money(exp)}</span></span></div>
+    <div class="list" style="max-height:48vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:0 8px">
+      ${items.slice(0, 600).map((x, i) => `<div class="row" style="grid-template-columns:auto minmax(0,1fr) auto;opacity:${x.sel ? 1 : .55}">
+        <input type="checkbox" class="imp-sel" data-i="${i}" ${x.sel ? "checked" : ""} style="width:auto" aria-label="Seç">
+        <div style="min-width:0"><div class="t" style="font-size:.9rem;font-weight:500">${esc(x.desc || "(açıklama yok)")}</div>
+          <div class="m">${dshort(x.date)}${x.dup ? ` · <span class="${x.dup === "var" ? "neg" : ""}" style="color:var(--warn)">${x.dup === "var" ? "zaten eklendi" : "olası tekrar"}</span>` : ""}${x.contactId ? ` · ${esc(con(x.contactId)?.name || "")}` : ""}</div>
+          <select class="imp-cat" data-i="${i}" style="margin-top:4px;padding:4px 6px;font-size:.82rem;width:auto;max-width:100%">${cats.map(c => `<option ${c === x.cat ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></div>
+        <div class="amt ${x.amount > 0 ? "pos" : "neg"}" style="font-size:.92rem">${x.amount > 0 ? "+" : "−"}${money(x.amt)}</div></div>`).join("")}
+    </div>${items.length > 600 ? `<p class="small-note">İlk 600 satır gösteriliyor; hepsi eklenecek.</p>` : ""}` : ""}
+    <div class="foot"><button type="button" class="btn" data-act="import-stmt">Başka dosya</button><div class="r"><button type="button" class="btn" data-close>Vazgeç</button>
+      <button type="button" class="btn primary" data-act="imp-commit" ${sel.length || imp.fixOpening ? "" : "disabled"}>${sel.length} işlemi ekle</button></div></div>
+  </div>`;
+  if ($("#impPanel")) { const sc = $("#impPanel .list")?.scrollTop; $("#impPanel").outerHTML = body; if (sc && $("#impPanel .list")) $("#impPanel .list").scrollTop = sc; }
+  else openSheet("Ekstreyi kontrol et", body);
+}
+function impMapChanged() {
+  const g = id => { const el = $(id); return el ? +el.value : undefined; };
+  const m = imp.map;
+  const h = g("#imp-h"); if (h && h - 1 !== imp.hIdx && h >= 1 && h <= imp.rows.length) { imp.hIdx = h - 1; imp.headers = (imp.rows[imp.hIdx] || []).map(x => String(x ?? "").trim()); imp.sig = IMP.headerSignature(imp.headers); Object.assign(m, IMP.guessMapping(imp.headers, imp.rows.slice(imp.hIdx + 1))); }
+  else {
+    for (const [id, k] of [["#imp-date", "date"], ["#imp-desc", "desc"], ["#imp-amount", "amount"], ["#imp-debit", "debit"], ["#imp-credit", "credit"], ["#imp-dir", "dir"], ["#imp-bal", "balance"]]) { const v = g(id); if (v !== undefined) m[k] = v; }
+    const mode = $("#imp-mode")?.value; if (mode && mode !== m.mode) { m.mode = mode; if (mode === "split") { m.debit = m.debit >= 0 ? m.debit : m.amount; } }
+  }
+  buildImpItems(); renderImport();
+}
+async function commitImport() {
+  const sel = imp.items.filter(x => x.sel), bi = impBalanceInfo();
+  const txs = sel.map(x => ({ id: uid8(), type: x.type, amount: x.amt, date: x.date, category: x.cat, accountId: imp.accountId, contactId: x.contactId || "", note: x.desc.slice(0, 140), importKey: x.key }));
+  const a = acc(imp.accountId), fix = imp.fixOpening && bi && Math.abs(bi.diff) >= 0.01 ? Math.round(((+a.opening || 0) + bi.diff) * 100) / 100 : null;
+  ls.set("kd-map:" + imp.sig, JSON.stringify(imp.map)); ls.set("kd-imp-acc", imp.accountId);
+  if (live()) {
+    const ops = txs.map(t => { const { id, ...d } = t; return { type: "set", col: "txns", id, data: d }; });
+    if (fix != null) { const { id, ...d } = { ...a, opening: fix }; ops.push({ type: "set", col: "accounts", id, data: d }); }
+    const ok = await safe(() => batchWrite(ops), `${txs.length} işlem eklendi`);
+    if (!ok) return; Drive.dirty();
+  } else {
+    S.txns.push(...txs); if (fix != null) a.opening = fix; saveDemo(); render(); toast(`${txs.length} işlem eklendi`);
+  }
+  imp = null; closeSheet(); ui.tab = "islemler"; ls.set("kd-tab", "islemler"); render();
 }
 
 function submitForm(f) {
@@ -811,6 +943,9 @@ document.addEventListener("click", async e => {
   if (a === "new-account") return accountForm();
   if (a === "new-contact") return contactForm();
   if (a === "csv") return exportCsv();
+  if (a === "import-stmt") return openImport(imp && imp.accountId);
+  if (a === "imp-pick") { imp.accountId = $("#imp-acc").value; $("#stmtFile").value = ""; $("#stmtFile").click(); return; }
+  if (a === "imp-commit") { el.disabled = true; el.textContent = "Ekleniyor…"; await commitImport(); return; }
   if (a === "export-json") return saveFile(`kasa-defteri-yedek-${TODAY}.json`, JSON.stringify(snapshotData(), null, 1), "application/json");
   if (a === "import") { $("#importFile").value = ""; $("#importFile").click(); return; }
   if (a === "seed") {
@@ -842,6 +977,20 @@ document.addEventListener("input", e => { if (e.target.id === "fq") { ui.q = e.t
 document.addEventListener("change", async e => {
   if (e.target.id === "ftype") { ui.ftype = e.target.value; render(); }
   else if (e.target.id === "facc") { ui.facc = e.target.value; render(); }
+  else if (e.target.id === "stmtFile") { const f = e.target.files && e.target.files[0]; if (f) readStatement(f); }
+  else if (e.target.id === "imp-acc" && imp) { imp.accountId = e.target.value; }
+  else if (e.target.closest && e.target.closest("#impPanel")) {
+    const t = e.target, i = t.dataset.i != null ? +t.dataset.i : -1;
+    if (t.classList.contains("imp-sel")) { imp.items[i].sel = t.checked; renderImport(); }
+    else if (t.classList.contains("imp-cat")) { // aynı açıklamalı diğer satırlara da uygula
+      const k = IMP.learnKey(imp.items[i].desc), prev = imp.items[i].cat; let n = 0;
+      imp.items.forEach((x, j) => { if (j === i || (k && IMP.learnKey(x.desc) === k && x.cat === prev)) { x.cat = t.value; if (j !== i) n++; } });
+      if (n) { renderImport(); toast(`Benzer ${n} satır da "${t.value}" yapıldı`); }
+    }
+    else if (t.id === "imp-all") { imp.items.forEach(x => { x.sel = t.checked && x.dup !== "var"; }); renderImport(); }
+    else if (t.id === "imp-fix") { imp.fixOpening = t.checked; renderImport(); }
+    else if (/^imp-/.test(t.id)) impMapChanged();
+  }
   else if (e.target.id === "importFile") {
     const f = e.target.files && e.target.files[0]; if (!f) return;
     try { const data = JSON.parse(await f.text()); if (await importData(data, "Yedek dosyası")) closeSheet(); }

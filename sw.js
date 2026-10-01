@@ -1,7 +1,7 @@
 // Kasa Defteri service worker — uygulama kabuğunu önbelleğe alır, internetsiz açılmayı sağlar.
 // Uygulamayı güncellediğinde VERSION değerini artır (ör. v2), telefonlar yeni sürümü alsın.
-const VERSION = "kd-v3";
-const SHELL = ["./", "index.html", "styles.css", "app.js", "firebase-config.js", "manifest.webmanifest",
+const VERSION = "kd-v4";
+const SHELL = ["./", "index.html", "styles.css", "app.js", "importer.js", "firebase-config.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-512.png", "icons/apple-touch-icon.png"];
 
 self.addEventListener("install", e => {
