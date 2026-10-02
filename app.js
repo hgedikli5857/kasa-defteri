@@ -44,7 +44,7 @@ const configured = firebaseConfig && firebaseConfig.apiKey && !/^BURAYA/.test(fi
 /* ---------- sample data (relative to today) ---------- */
 function buildSample() {
   const A = [{ id: "a1", name: "Bankomat", group: "Ziraat", kind: "banka", opening: 42500 }, { id: "a4", name: "Yatırım hesabı", group: "Ziraat", kind: "yatırım", opening: 75000 },
-    { id: "a2", name: "Ticari vadesiz", group: "Garanti BBVA", kind: "banka", opening: 18200 }, { id: "a5", name: "Bonus Kart", group: "Garanti BBVA", kind: "kredi kartı", opening: -6200 },
+    { id: "a2", name: "Ticari vadesiz", group: "Garanti BBVA", kind: "banka", opening: 18200 }, { id: "a5", name: "Bonus Kart", group: "Garanti BBVA", kind: "kredi kartı", opening: -6200, limit: 30000 },
     { id: "a6", name: "Altın hesabı", group: "Ziraat", kind: "birikim", asset: "GRA", opening: 25 }, { id: "a7", name: "Dolar hesabı", group: "Garanti BBVA", kind: "banka", asset: "USD", opening: 1500 },
     { id: "a3", name: "Nakit Kasa", group: "Nakit", kind: "nakit", opening: 3750 }, { id: "a8", name: "Çeyrekler", group: "Nakit", kind: "birikim", asset: "CEYREKALTIN", opening: 6 }];
   const C = [{ id: "c1", name: "Ayşe Yılmaz", kind: "müşteri", phone: "0532 000 00 01" }, { id: "c2", name: "Demir Lojistik", kind: "tedarikçi", phone: "" }, { id: "c3", name: "Kaya Gayrimenkul", kind: "tedarikçi", phone: "" }, { id: "c4", name: "Mert Kaplan", kind: "müşteri", phone: "" }, { id: "c5", name: "Elif Danışmanlık", kind: "müşteri", phone: "" }];
@@ -553,7 +553,7 @@ function viewOzet() {
       <div class="legend"><span><i style="background:var(--pos)"></i>Gelir</span><span><i style="background:var(--neg)"></i>Gider</span></div></div>
       ${monthChart()}</div>
     <div class="panel"><div class="ph"><h2>Hesaplar</h2><button class="btn small" data-act="new-account">+ Hesap</button></div>
-      <div class="list">${accountGroups().map(g => `<div class="dhead" style="padding-top:8px"><span>${esc(g.name)}</span><span class="num ${g.total < 0 ? "neg" : ""}">${money(g.total)}</span></div>` + g.list.map(a => `<div class="row click" data-edit-account="${esc(a.id)}" style="padding-left:12px"><div><div class="t">${esc(a.name)}</div><div class="m">${esc(kindLabel(a.kind))}${accAsset(a) !== "TRY" ? " · " + fmtAsset(balanceOf(a), accAsset(a)) : ""}</div></div><div class="amt ${valueTRY(a) < 0 ? "neg" : ""}">${money(valueTRY(a))}</div></div>`).join("")).join("") || `<p class="muted">Henüz hesap yok.</p>`}</div></div>
+      <div class="list">${accountGroups().map(g => `<div class="dhead" style="padding-top:8px"><span>${esc(g.name)}</span><span class="num ${g.total < 0 ? "neg" : ""}">${money(g.total)}</span></div>` + g.list.map(a => `<div class="row click" data-edit-account="${esc(a.id)}" style="padding-left:12px"><div><div class="t">${esc(a.name)}</div><div class="m">${esc(kindLabel(a.kind))}${accAsset(a) !== "TRY" ? " · " + fmtAsset(balanceOf(a), accAsset(a)) : ""}${limitInfo(a) ? ` · <span style="color:${limitInfo(a).col}">kalan limit ${money0(limitInfo(a).avail)}</span>` : ""}</div></div><div class="amt ${valueTRY(a) < 0 ? "neg" : ""}">${money(valueTRY(a))}</div></div>`).join("")).join("") || `<p class="muted">Henüz hesap yok.</p>`}</div></div>
   </section>`;
 }
 function planRow(p) {
@@ -678,11 +678,23 @@ function viewHesaplar() {
     </section>`;
   }).join("") || `<section class="panel"><p class="muted">Henüz hesap yok.</p></section>`}`;
 }
+const old0 = id => S.accounts.find(x => x.id === id);
+const isCredit = a => a && (a.kind === "kredi kartı" || a.kind === "kredi");
+function limitInfo(a) {
+  if (!isCredit(a) || !(+a.limit > 0)) return null;
+  const used = Math.max(0, -balanceOf(a)), lim = +a.limit, avail = lim - used, pct = Math.min(1, used / lim);
+  return { lim, used, avail, pct, col: pct >= 0.8 ? "var(--neg)" : pct >= 0.5 ? "var(--warn)" : "var(--pos)" };
+}
 function accCard(a) {
   const b = balanceOf(a), tx = S.txns.filter(t => t.accountId === a.id || t.toAccountId === a.id), last = tx.reduce((m, t) => t.date > m ? t.date : m, "");
   return `<button class="acard" data-edit-account="${esc(a.id)}" type="button"><div style="display:flex;justify-content:space-between;gap:8px;align-items:start"><b>${esc(a.name)}</b><span class="pill ${a.kind === "kredi kartı" || a.kind === "kredi" ? "neg" : a.kind === "yatırım" || a.kind === "vadeli" || a.kind === "birikim" ? "pos" : "acc"}">${esc(kindLabel(a.kind))}</span></div>
     <div class="bal ${b < 0 ? "neg" : ""}">${fmtAsset(b, accAsset(a))}</div>
     ${accAsset(a) !== "TRY" ? `<div class="muted" style="font-size:.82rem">≈ ${money(valueTRY(a))} · ${esc(assetOf(accAsset(a))[1])}</div>` : ""}
+    ${(() => { const L = limitInfo(a); return L ? `<div style="display:grid;gap:4px">
+      <div style="height:8px;background:var(--surface-2);border-radius:4px;overflow:hidden"><div style="width:${(L.pct * 100).toFixed(1)}%;height:100%;background:${L.col}"></div></div>
+      <div style="display:flex;justify-content:space-between;gap:8px;font-size:.84rem"><span>Kalan limit <b class="num" style="color:${L.col}">${money(L.avail)}</b></span><span class="muted">/ ${money0(L.lim)}</span></div>
+      ${L.pct >= 0.8 ? `<div class="neg" style="font-size:.78rem">Limitin %${Math.round(L.pct * 100)} kadarı dolu</div>` : ""}
+      ${a.limitSyncAt ? `<div class="muted" style="font-size:.74rem">Bankayla eşitlendi: ${tfmt.format(new Date(a.limitSyncAt))}</div>` : ""}</div>` : isCredit(a) ? `<div class="muted" style="font-size:.78rem">Limit girilmedi · düzenlemek için dokun</div>` : ""; })()}
     <div class="muted" style="font-size:.82rem">${tx.length} işlem${last ? ` · son ${dshort(last)}` : ""}</div></button>`;
 }
 function updateOpenConv() {
@@ -857,6 +869,12 @@ function accountForm(a) {
     <label>Hesap adı<input id="f-name" required value="${esc(a?.name || "")}" placeholder="Örn. Bankomat, Yatırım, Bonus kart"></label></div>
     <div class="f2"><label>Tür<select id="f-kind">${opt(KINDS, a?.kind || ui.newKind || "banka")}</select></label>
     <label>Para / varlık cinsi<select id="f-asset">${assetOptions(a?.asset || "TRY")}</select></label></div>
+    <div id="f-limit-box" ${isCredit(a || { kind: ui.newKind }) ? "" : "hidden"} style="display:grid;gap:10px;border:1px solid var(--line);border-radius:10px;padding:12px">
+      <b style="font-size:.92rem">Kart / kredi limiti</b>
+      <div class="f2"><label>Toplam limit (₺)<input id="f-limit" inputmode="decimal" value="${a && a.limit ? amtStr(a.limit) : ""}" placeholder="Örn. 90.000"></label>
+      <label>Bankadaki güncel kalan limit (₺)<input id="f-avail" inputmode="decimal" placeholder="Örn. 37.253,42"></label></div>
+      <p class="small-note" style="margin:0" id="f-avail-hint">Kalan limiti bankanın uygulamasından bakıp yazarsan, borç buna göre eşitlenir. Ekstreden gelen tutarlarla oluşan farklar böylece düzelir.</p>
+    </div>
     <label><span id="f-open-lbl">Açılış bakiyesi (${amtUnit(a || { asset: "TRY" })})</span><input id="f-open" inputmode="decimal" value="${amtStr(a?.opening) || "0"}"></label>
     <p id="f-open-conv" class="small-note" style="margin:0"></p>
     <p class="muted" style="margin:0;font-size:.82rem">Aynı bankadaki hesaplar (bankomat, yatırım, kredi kartı) aynı grupta toplanır. Kredi kartı ve kredi borcunu eksi bakiye olarak gir (örn. -4500).</p>
@@ -1308,7 +1326,17 @@ function submitForm(f) {
     const o = { ...(old || {}), id: id || uid8(), dir: v("#f-dir"), amount: parseAmt(v("#f-amount")), due: v("#f-due"), contactId: v("#f-con"), category: c.category, sub: c.sub, repeat: v("#f-rep"), note: v("#f-note"), status: old?.status || "bekliyor" };
     put("plans", o); toast(id ? "Vade güncellendi" : "Vade eklendi"); closeSheet();
   } else if (kind === "account") {
+    const limit = parseAmt(v("#f-limit")), avail = parseAmt(v("#f-avail"));
     const o = { id: id || uid8(), name: v("#f-name"), group: v("#f-group") || inferGroup(v("#f-name")), kind: v("#f-kind"), asset: v("#f-asset") || "TRY", opening: parseAmt(v("#f-open")) || 0 };
+    if (isCredit(o)) {
+      o.limit = limit > 0 ? limit : 0;
+      if (limit > 0 && avail >= 0 && v("#f-avail") !== "") {
+        const target = -(limit - avail), old = old0(o.id);
+        const cur = old ? balanceOf({ ...old, opening: o.opening }) : o.opening;
+        o.opening = Math.round((o.opening + (target - cur)) * 100) / 100; o.limitSyncAt = new Date().toISOString();
+        setTimeout(() => toast(`Kart borcu ${money(-target)}, kalan limit ${money(avail)} olarak eşitlendi`), 50);
+      } else if (old0(o.id)?.limitSyncAt) o.limitSyncAt = old0(o.id).limitSyncAt;
+    }
     ui.newGroup = ""; ui.newKind = "";
     if (!o.name) { toast("Hesap adı gir."); return; }
     put("accounts", o); toast(id ? "Hesap güncellendi" : "Hesap eklendi"); closeSheet();
@@ -1439,6 +1467,7 @@ document.addEventListener("submit", e => {
 document.addEventListener("input", e => {
   if (["f-amount", "f-rate", "f-toamt"].includes(e.target.id) && $("#frm")?.dataset.kind === "txn") updateTxnUnits();
   if (e.target.id === "f-open") updateOpenConv();
+  if (["f-limit", "f-avail"].includes(e.target.id)) { const L = parseAmt($("#f-limit").value), A = parseAmt($("#f-avail").value), h = $("#f-avail-hint"); if (L > 0 && A >= 0 && $("#f-avail").value) h.innerHTML = `Kaydedince kart borcu <b>${money(L - A)}</b> olarak ayarlanacak (limitin %${Math.round((L - A) / L * 100)} kadarı kullanılmış).`; }
   if (e.target.id === "fq") { ui.q = e.target.value; ui._focusQ = true; render(); } });
 document.addEventListener("change", async e => {
   if (e.target.id === "ftype") { ui.ftype = e.target.value; render(); }
@@ -1450,6 +1479,7 @@ document.addEventListener("change", async e => {
   }
   else if (e.target.id === "f-sub") { const nw = e.target.value === "__new", ni = $("#f-sub-new"); ni.hidden = !nw; if (nw) ni.focus(); }
   else if (["f-acc", "f-to"].includes(e.target.id) && $("#frm")?.dataset.kind === "txn") updateTxnUnits();
+  else if (e.target.id === "f-kind" && $("#f-limit-box")) { $("#f-limit-box").hidden = !isCredit({ kind: e.target.value }); }
   else if (e.target.id === "f-asset") { const code = e.target.value; $("#f-open-lbl").textContent = `Açılış bakiyesi (${amtUnit({ asset: code })})`; updateOpenConv(); }
   else if (e.target.id === "stmtFile") { const f = e.target.files && e.target.files[0]; if (f) readStatement(f); }
   else if (e.target.id === "imp-acc" && imp) { imp.accountId = e.target.value; }
