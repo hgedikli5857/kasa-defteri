@@ -202,8 +202,10 @@ function resolveCat(f, type) {
 
 const accName = a => { const g = groupOf(a); return a.name.toLocaleUpperCase("tr").includes(g.toLocaleUpperCase("tr")) || g === "Nakit" || g === "Diğer hesaplar" ? a.name : `${g} ${a.name}`; };
 /* --- hesap grupları (banka bazında) --- */
-const KINDS = [["banka", "Vadesiz / bankomat"], ["vadeli", "Vadeli mevduat"], ["yatırım", "Yatırım hesabı"], ["kredi kartı", "Kredi kartı"], ["kredi", "Kredi / KMH"], ["birikim", "Birikim / altın / döviz"], ["nakit", "Nakit kasa"]];
-const kindLabel = k => (KINDS.find(x => x[0] === k) || [k, k || "Hesap"])[1];
+const KINDS = [["nakit", "Nakit (cüzdan / kasa / ev)"], ["banka", "Vadesiz / bankomat"], ["vadeli", "Vadeli mevduat"], ["yatırım", "Yatırım hesabı"], ["kredi kartı", "Kredi kartı"], ["kredi", "Kredi / KMH"], ["birikim", "Birikim / altın / döviz"]];
+const isCash = a => a && a.kind === "nakit";
+const cashTotal = () => sum(S.accounts.filter(isCash), valueTRY);
+const kindLabel = k => (KINDS.find(x => x[0] === k) || [k, k || "Hesap"])[1].replace(/ \(.*\)$/, "");
 const KNOWN_BANKS = ["Ziraat", "Halkbank", "VakıfBank", "Vakıfbank", "Garanti BBVA", "Garanti", "İş Bankası", "Türkiye İş Bankası", "Yapı Kredi", "Akbank", "QNB", "Finansbank", "Denizbank", "DenizBank", "Enpara", "TEB", "ING", "HSBC", "Şekerbank", "Fibabanka", "Odeabank", "Kuveyt Türk", "Albaraka", "Türkiye Finans", "Ziraat Katılım", "Vakıf Katılım", "Emlak Katılım", "Papara", "Midas", "ininal", "Param", "Burgan", "Alternatif Bank", "Anadolubank", "ICBC", "Colendi", "Hayat Finans"];
 const CANON = { "Garanti": "Garanti BBVA", "Türkiye İş Bankası": "İş Bankası", "Vakıfbank": "VakıfBank", "DenizBank": "Denizbank", "Finansbank": "QNB" };
 function inferGroup(name) {
@@ -221,7 +223,8 @@ function accountGroups() {
     const bals = list.map(valueTRY);
     return { name, list, total: sum(bals, x => x), assets: sum(bals, x => x > 0 ? x : 0), debts: sum(bals, x => x < 0 ? -x : 0) };
   });
-  return out.sort((x, y) => (x.name === "Nakit" || x.name === "Diğer hesaplar") - (y.name === "Nakit" || y.name === "Diğer hesaplar") || y.assets + y.debts - (x.assets + x.debts));
+  const rank = g => g.list.every(isCash) ? 0 : g.name === "Diğer hesaplar" ? 2 : 1; // nakit en üstte
+  return out.sort((x, y) => rank(x) - rank(y) || y.assets + y.debts - (x.assets + x.debts));
 }
 const groupNames = () => [...new Set(S.accounts.map(groupOf).concat(KNOWN_BANKS.map(b => CANON[b] || b)))];
 const pending = () => S.plans.filter(p => p.status !== "tamam");
@@ -523,7 +526,8 @@ function emptyView() {
   return `<section class="panel empty"><h3>Defterin boş</h3>
   <p>Gelir, gider, banka hesapları, cariler ve vadeli ödemeler burada toplanır. Kayıtların yalnızca sana görünür.</p>
   <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:14px">
-  <button class="btn primary" data-act="new-account">İlk hesabını ekle</button>
+  <button class="btn primary" data-act="new-account">İlk banka hesabını ekle</button>
+  <button class="btn" data-act="new-cash">Nakit / kasa ekle</button>
   <button class="btn" data-act="import">Yedek dosyasından yükle</button>
   <button class="btn" data-act="drive-restore">Drive'dan geri yükle</button>
   <button class="btn" data-act="seed">Örnek verilerle dene</button></div>
@@ -538,7 +542,7 @@ function viewOzet() {
   const kpi = (l, v, s, cls = "") => `<div class="panel kpi ${cls}"><div class="lbl">${l}</div><div class="val">${v}</div><div class="sub">${s}</div></div>`;
   const up = pending().filter(x => x.due <= addDays(TODAY, 14)).sort((a, b) => a.due < b.due ? -1 : 1);
   return `<section class="grid g-kpi">
-    ${kpi("Kasa ve banka", money(cash), `${S.accounts.length} hesap`, "hl")}
+    ${kpi("Nakit ve banka", money(cash), S.accounts.some(isCash) ? `Nakit ${money0(cashTotal())} · Banka ${money0(cash - cashTotal())}` : `${S.accounts.length} hesap`, "hl")}
     ${kpi("Alacaklar", `<span class="pos">${money(r)}</span>`, `${pending().filter(x => x.dir === "tahsilat").length} bekleyen tahsilat`)}
     ${kpi("Borçlar", `<span class="neg">${money(p)}</span>`, `${pending().filter(x => x.dir === "ödeme").length} bekleyen ödeme`)}
     ${kpi("30 gün sonra", `<span class="${d30 < 0 ? "neg" : ""}">${money(d30)}</span>`, `Bugüne göre ${signed(d30 - cash)}`)}
@@ -665,12 +669,14 @@ function viewHesaplar() {
   const gs = accountGroups(), total = totalCash(), assets = sum(gs, g => g.assets), debts = sum(gs, g => g.debts);
   let collapsed = {}; try { collapsed = JSON.parse(ls.get("kd-collapsed") || "{}"); } catch (e) { }
   return `<section class="panel"><div class="ph"><div><h2>Hesaplar</h2><p>${gs.length} grup · ${S.accounts.length} hesap</p></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="import-stmt">⇣ Ekstre</button><button class="btn" data-act="new-transfer">⇄ Transfer</button><button class="btn primary" data-act="new-account">+ Hesap</button></div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="import-stmt">⇣ Ekstre</button><button class="btn" data-act="new-transfer">⇄ Transfer</button><button class="btn" data-act="new-cash">+ Nakit</button><button class="btn primary" data-act="new-account">+ Hesap</button></div></div>
     <div class="grid g-kpi" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+      <div class="kpi" style="padding:4px 0"><div class="lbl">Nakit</div><div class="val">${money(cashTotal())}</div></div>
       <div class="kpi" style="padding:4px 0"><div class="lbl">Varlıklar</div><div class="val pos">${money(assets)}</div></div>
       <div class="kpi" style="padding:4px 0"><div class="lbl">Borçlar (kart, kredi)</div><div class="val neg">${money(debts)}</div></div>
       <div class="kpi" style="padding:4px 0"><div class="lbl">Net</div><div class="val ${total < 0 ? "neg" : ""}">${money(total)}</div></div>
     </div></section>
+  ${!S.accounts.some(isCash) ? `<button class="acard" type="button" data-act="new-cash" style="text-align:left;border-style:dashed"><b>+ Nakit hesabı ekle</b><span class="muted" style="font-size:.85rem">Cüzdan, kasa, evde duran döviz veya altın. Bankaya yatırmadığın parayı da takip et.</span></button>` : ""}
   ${gs.map(g => {
     const open = !collapsed[g.name], share = assets > 0 ? Math.round(g.assets / assets * 100) : 0;
     return `<section class="panel"><div class="ph" style="margin-bottom:${open ? 12 : 0}px">
@@ -910,9 +916,9 @@ function planForm(p) {
     ${formFoot(p?.id)}</form>`);
 }
 function accountForm(a) {
-  openSheet(a ? "Hesabı düzenle" : "Yeni hesap", `<form class="form" id="frm" data-kind="account" data-id="${esc(a?.id || "")}">
-    <div class="f2"><label>Banka / Grup<input id="f-group" list="dl-groups" value="${esc(a ? (a.group || inferGroup(a.name)) : (ui.newGroup || ""))}" placeholder="Örn. Ziraat"><datalist id="dl-groups">${groupNames().map(g => `<option value="${esc(g)}">`).join("")}</datalist></label>
-    <label>Hesap adı<input id="f-name" required value="${esc(a?.name || "")}" placeholder="Örn. Bankomat, Yatırım, Bonus kart"></label></div>
+  openSheet(a ? "Hesabı düzenle" : isCash({ kind: ui.newKind }) ? "Yeni nakit hesabı" : "Yeni hesap", `<form class="form" id="frm" data-kind="account" data-id="${esc(a?.id || "")}">
+    <div class="f2"><label><span id="f-group-lbl">${isCash(a || { kind: ui.newKind }) ? "Grup" : "Banka / Grup"}</span><input id="f-group" list="dl-groups" value="${esc(a ? (a.group || inferGroup(a.name)) : (ui.newGroup || ""))}" placeholder="${isCash(a || { kind: ui.newKind }) ? "Nakit" : "Örn. Ziraat"}"><datalist id="dl-groups">${groupNames().map(g => `<option value="${esc(g)}">`).join("")}</datalist></label>
+    <label>Hesap adı<input id="f-name" required value="${esc(a?.name || "")}" placeholder="${isCash(a || { kind: ui.newKind }) ? "Örn. Cüzdan, Kasa, Evdeki dolar" : "Örn. Bankomat, Yatırım, Bonus kart"}"></label></div>
     <div class="f2"><label>Tür<select id="f-kind">${opt(KINDS, a?.kind || ui.newKind || "banka")}</select></label>
     <label>Para / varlık cinsi<select id="f-asset">${assetOptions(a?.asset || "TRY")}</select></label></div>
     <div id="f-limit-box" ${isCredit(a || { kind: ui.newKind }) ? "" : "hidden"} style="display:grid;gap:10px;border:1px solid var(--line);border-radius:10px;padding:12px">
@@ -959,7 +965,7 @@ function completeForm(p) {
     <div class="foot"><span></span><div class="r"><button type="button" class="btn" data-close>Vazgeç</button><button class="btn primary" type="submit">Kaydet</button></div></div></form>`);
 }
 function newMenu() {
-  openSheet("Ne eklemek istiyorsun?", `<div class="form" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">${[["new-gelir", "Gelir", "Satış, hizmet, faiz"], ["new-gider", "Gider", "Kira, fatura, maaş"], ["new-transfer", "Transfer", "Hesaplar arası para aktarımı"], ["new-plan", "Vade", "Yaklaşan ödeme veya tahsilat"], ["new-contact", "Cari", "Müşteri veya tedarikçi"], ["new-account", "Hesap", "Banka, kasa, kredi kartı"], ["import-stmt", "Ekstre", "Bankadan indirilen Excel/CSV"]].map(([a, t, s]) => `<button class="acard" data-act="${a}" type="button"><b>${t}</b><span class="muted" style="font-size:.84rem">${s}</span></button>`).join("")}</div>`);
+  openSheet("Ne eklemek istiyorsun?", `<div class="form" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">${[["new-gelir", "Gelir", "Satış, hizmet, faiz"], ["new-gider", "Gider", "Kira, fatura, maaş"], ["new-transfer", "Transfer", "Hesaplar arası para aktarımı"], ["new-plan", "Vade", "Yaklaşan ödeme veya tahsilat"], ["new-contact", "Cari", "Müşteri veya tedarikçi"], ["new-account", "Hesap", "Banka, kredi kartı, yatırım"], ["new-cash", "Nakit", "Cüzdan, kasa, evdeki döviz/altın"], ["import-stmt", "Ekstre", "Bankadan indirilen Excel/CSV"]].map(([a, t, s]) => `<button class="acard" data-act="${a}" type="button"><b>${t}</b><span class="muted" style="font-size:.84rem">${s}</span></button>`).join("")}</div>`);
 }
 /* --- harcama analizi (Özet) --- */
 // renk ölçeği: en yüksek pay kırmızı, sonra turuncu, amber; küçük kalemler nötr
@@ -1499,7 +1505,7 @@ function submitForm(f) {
     put("plans", o); toast(id ? "Vade güncellendi" : "Vade eklendi"); closeSheet();
   } else if (kind === "account") {
     const limit = parseAmt(v("#f-limit")), avail = parseAmt(v("#f-avail"));
-    const o = { id: id || uid8(), name: v("#f-name"), group: v("#f-group") || inferGroup(v("#f-name")), kind: v("#f-kind"), asset: v("#f-asset") || "TRY", opening: parseAmt(v("#f-open")) || 0 };
+    const o = { id: id || uid8(), name: v("#f-name"), group: v("#f-group") || inferGroup(v("#f-name")) || (v("#f-kind") === "nakit" ? "Nakit" : ""), kind: v("#f-kind"), asset: v("#f-asset") || "TRY", opening: parseAmt(v("#f-open")) || 0 };
     if (isCredit(o)) {
       const old = old0(o.id) || {};
       o.limit = limit > 0 ? limit : 0;
@@ -1579,7 +1585,7 @@ document.addEventListener("click", async e => {
   }
   if (d.cmDelsub) { const [i, j] = d.cmDelsub.split("|").map(Number); const o = JSON.parse(JSON.stringify(catsObj())); o[CM.type][i].s.splice(j, 1); saveCats(o); return catManager(); }
   if (d.toggleGroup) { let c = {}; try { c = JSON.parse(ls.get("kd-collapsed") || "{}"); } catch (e) { } c[d.toggleGroup] = !c[d.toggleGroup]; ls.set("kd-collapsed", JSON.stringify(c)); return render(); }
-  if (d.newInGroup) { ui.newGroup = d.newInGroup; return accountForm(); }
+  if (d.newInGroup) { ui.newGroup = d.newInGroup; const gl = accountGroups().find(g => g.name === d.newInGroup); if (gl && gl.list.every(isCash)) ui.newKind = "nakit"; return accountForm(); }
   if (d.renameGroup) return renameGroup(d.renameGroup);
   if (d.planFor) { planForm({ contactId: d.planFor, dir: "tahsilat" }); return; }
   if (el.id === "addBtn") return newMenu();
@@ -1592,7 +1598,8 @@ document.addEventListener("click", async e => {
   if (a === "new-gider" || a === "new-txn") return txnForm(null, "gider");
   if (a === "new-transfer") { if (S.accounts.length < 2) { toast("Transfer için en az iki hesap gerekli."); return; } return txnForm(null, "transfer"); }
   if (a === "new-plan") return planForm();
-  if (a === "new-account") return accountForm();
+  if (a === "new-account") { ui.newKind = ""; ui.newGroup = ""; return accountForm(); }
+  if (a === "new-cash") { ui.newKind = "nakit"; ui.newGroup = (accountGroups().find(g => g.list.every(isCash)) || {}).name || "Nakit"; return accountForm(); }
   if (a === "new-contact") return contactForm();
   if (a === "csv") return exportCsv();
   if (a === "imports") return importsPanel();
@@ -1656,7 +1663,12 @@ document.addEventListener("change", async e => {
   }
   else if (e.target.id === "f-sub") { const nw = e.target.value === "__new", ni = $("#f-sub-new"); ni.hidden = !nw; if (nw) ni.focus(); }
   else if (["f-acc", "f-to"].includes(e.target.id) && $("#frm")?.dataset.kind === "txn") updateTxnUnits();
-  else if (e.target.id === "f-kind" && $("#f-limit-box")) { $("#f-limit-box").hidden = !isCredit({ kind: e.target.value }); }
+  else if (e.target.id === "f-kind" && $("#f-limit-box")) {
+    const k = e.target.value, g = $("#f-group"); $("#f-limit-box").hidden = !isCredit({ kind: k });
+    $("#f-group-lbl").textContent = k === "nakit" ? "Grup" : "Banka / Grup"; g.placeholder = k === "nakit" ? "Nakit" : "Örn. Ziraat";
+    if (k === "nakit" && !g.value) g.value = "Nakit"; else if (k !== "nakit" && g.value === "Nakit") g.value = "";
+    if (k === "nakit" && !$("#f-name").value) $("#f-name").placeholder = "Örn. Cüzdan, Kasa, Evdeki dolar";
+  }
   else if (e.target.id === "f-asset") { const code = e.target.value; $("#f-open-lbl").textContent = `Açılış bakiyesi (${amtUnit({ asset: code })})`; updateOpenConv(); }
   else if (e.target.id === "stmtFile") { const f = e.target.files && e.target.files[0]; if (f) readStatement(f); }
   else if (e.target.id === "imp-acc" && imp) { imp.accountId = e.target.value; }
