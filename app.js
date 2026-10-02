@@ -1351,6 +1351,8 @@ async function readStatement(file, password) {
     let map = null; try { map = JSON.parse(ls.get("kd-map:" + sig) || "null"); } catch (e) { }
     if (!map) { map = IMP.guessMapping(headers, rows.slice(hIdx + 1)); const ex = IMP.extract(rows, hIdx, map); if (acc(imp.accountId)?.kind === "kredi kartı" && ex.length && ex.filter(x => x.amount > 0).length > ex.length * 0.6) map.invert = true; }
     Object.assign(imp, { fileName: file.name, rows, hIdx, headers, sig, map, fixOpening: false, unitFor: null, unitMode: null, tradeAcc: tradeAccDefault(acc(imp.accountId)) });
+    imp.meta = rows.meta || null;
+    if (imp.meta && isCredit(acc(imp.accountId))) { if (imp.meta.limit) imp.limit = imp.meta.limit; if (imp.meta.cutDay) imp.cut = imp.meta.cutDay; }
     buildImpItems(); clearTimeout(tt); $("#toastRoot").innerHTML = ""; renderImport();
   } catch (e) {
     if (e instanceof IMP.PdfPasswordError) { clearTimeout(tt); $("#toastRoot").innerHTML = ""; return askPdfPassword(e.wrong); }
@@ -1475,6 +1477,7 @@ function renderImport() {
       <label>Bankadaki güncel kalan limit (₺)<input id="imp-avail" inputmode="decimal" value="${imp.avail != null ? amtStr(imp.avail) : ""}" placeholder="Örn. 37.253,42"></label></div>
       <div class="f2"><label>Dönem içi harcamalar (₺)<input id="imp-spent" inputmode="decimal" value="${imp.spent != null && !isNaN(imp.spent) ? amtStr(imp.spent) : ""}" placeholder="Örn. 48.534,82"></label>
       <label>Hesap kesim günü<input id="imp-cut" inputmode="numeric" value="${imp.cut || acc(imp.accountId).cutDay || ""}" placeholder="Örn. 15"></label></div>
+      ${imp.meta ? `<p class="small-note" style="margin:0;color:var(--pos)">Ekstreden okundu: ${[imp.meta.limit ? "kart limiti " + money0(imp.meta.limit) : "", imp.meta.cutDay ? "kesim günü " + imp.meta.cutDay : "", imp.meta.debt != null ? "dönem borcu " + money(imp.meta.debt) : ""].filter(Boolean).join(" · ")}</p>` : ""}
       <p class="small-note" style="margin:0">Yazarsan kartın borcu bankadaki rakama sabitlenir; ekstredeki geçmiş harcamalar limiti ikinci kez düşürmez, sadece analizde kullanılır.</p></div>` : ""}
     ${bi && !isCredit(acc(imp.accountId)) ? `<div class="notice ${Math.abs(bi.diff) < 0.01 ? "" : "warn"}" style="margin:0"><span>${Math.abs(bi.diff) < 0.01 ? `<b>Bakiye tutuyor.</b> Bankadaki bakiye (${dshort(bi.date)}) ile uygulamadaki bakiye aynı: <b class="num">${fmtAsset(bi.bank, IC)}</b>` : `<b>Bakiye farkı var.</b> Bankada <b class="num">${fmtAsset(bi.bank, IC)}</b>, içe aktarma sonrası uygulamada <b class="num">${fmtAsset(bi.after, IC)}</b> olacak (fark ${IC === "TRY" ? signed(bi.diff) : fmtAsset(bi.diff, IC)}).<br><label style="display:flex;gap:8px;align-items:center;margin-top:6px;color:var(--ink);font-size:.9rem"><input type="checkbox" id="imp-fix" style="width:auto" ${imp.fixOpening ? "checked" : ""}> Açılış bakiyesini düzelterek eşitle (${fmtAsset((+acc(imp.accountId).opening || 0) + bi.diff, IC)})</label>`}</span></div>` : ""}
     ${impAnalysis(sel)}

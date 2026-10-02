@@ -61,8 +61,12 @@ async function pdfLines(buf, password) {
   const lines = [];
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
-    const tc = await page.getTextContent();
-    const items = tc.items.filter(it => it.str && it.str.trim()).map(it => ({ s: it.str, x: it.transform[4], y: it.transform[5], w: it.width || it.str.length * 4, h: Math.abs(it.transform[3]) || 8 }));
+    const tc = await page.getTextContent(), vp = page.getViewport({ scale: 1 });
+    // görüntü koordinatlarına çevir: döndürülmüş / ters basılmış sayfalar (ör. Albaraka) de soldan sağa, yukarıdan aşağı okunur
+    const items = tc.items.filter(it => it.str && it.str.trim()).map(it => {
+      const t = pdfjs.Util.transform(vp.transform, it.transform), h = Math.hypot(t[2], t[3]) || 8;
+      return { s: it.str, x: t[4], y: -t[5], w: it.width || it.str.length * 4, h };
+    });
     items.sort((a, b) => b.y - a.y || a.x - b.x);
     const pageLines = [];
     for (const it of items) {
@@ -142,15 +146,24 @@ function linesToRegexRows(lines) {
   }
   return rows.length > 1 ? rows : null;
 }
+// Kart ekstresi özet bilgileri: kart limiti, hesap kesim günü, dönem borcu
+export function statementMeta(text) {
+  const T = norm(text), num = re => { const m = T.match(re); return m ? parseAmount(m[1]) : null; };
+  const meta = { limit: num(/KART LIMITI\s*(?:\(TL\))?\s*:?\s*([\d.,]+)/), debt: num(/DONEM BORCU\s*(?:\(TL\))?\s*:?\s*([\d.,]+)/) };
+  const c = T.match(/(?<!SONRAKI )HESAP KESIM TARIHI\s*:?\s*(\d{1,2})[\s./-]/); if (c && +c[1] >= 1 && +c[1] <= 31) meta.cutDay = +c[1];
+  return meta.limit || meta.cutDay || meta.debt ? meta : null;
+}
 async function pdfToRows(buf, password) {
   const lines = await pdfLines(buf, password);
+  const meta = statementMeta(lines.map(l => l.cells.map(c => c.s).join(" ")).join("\n"));
+  const withMeta = r => { if (meta) r.meta = meta; return r; };
   const table = linesToTable(lines);
   if (table) {
     const h = detectHeader(table), m = guessMapping(table[h], table.slice(h + 1));
-    if (extract(table, h, m).length) return table;
+    if (extract(table, h, m).length) return withMeta(table);
   }
   const rx = linesToRegexRows(lines);
-  if (rx) return rx;
+  if (rx) return withMeta(rx);
   throw new Error("PDF'te hesap hareketi tablosu bulunamadı. Bu bankanın PDF biçimini Claude'a gönder, okuyucuyu uyarlasın.");
 }
 
@@ -283,7 +296,8 @@ export function extract(rows, headerIdx, m, opt = {}) {
       if (amt != null && m.mode === "dir") { const dv = norm(r[m.dir]); if (/^(B|BORC|-|CIKIS|GIDER|HARCAMA)/.test(dv)) amt = -Math.abs(amt); else if (/^(A|ALACAK|\+|GIRIS|GELIR)/.test(dv)) amt = Math.abs(amt); }
     }
     if (!amt) continue;
-    if (m.invert) amt = -amt;
+    const rawA = String((m.mode === "split" ? "" : r[m.amount]) ?? "").trim();
+    if (m.invert) amt = /^\+/.test(rawA) ? Math.abs(amt) : -amt; // kart ekstresinde "+4.080,78" = ödeme (alacak)
     const desc = cleanDesc(String(r[m.desc] ?? ""));
     const bal = m.balance >= 0 ? parseAmount(r[m.balance], opt.qty) : null;
     const q = opt.qtyCol >= 0 ? parseAmount(r[opt.qtyCol], true) : null, tl = opt.tlCol >= 0 ? parseAmount(r[opt.tlCol]) : null;
@@ -349,3 +363,4 @@ const SUBRULES = [
 ];
 export function guessSub(desc) { const d = " " + norm(desc) + " "; for (const [s, keys] of SUBRULES) if (keys.some(x => d.includes(x))) return s; return ""; }
 export function headerSignature(headers) { return headers.map(norm).filter(Boolean).join("|").slice(0, 300); }
+export const _dbg = { pdfLines: (...a) => pdfLines(...a), linesToTable: (...a) => linesToTable(...a), linesToRegexRows: (...a) => linesToRegexRows(...a) };
