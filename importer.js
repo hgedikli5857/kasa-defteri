@@ -274,7 +274,7 @@ export function extract(rows, headerIdx, m) {
     }
     if (!amt) continue;
     if (m.invert) amt = -amt;
-    const desc = String(r[m.desc] ?? "").replace(/\s+/g, " ").trim();
+    const desc = cleanDesc(String(r[m.desc] ?? ""));
     const bal = m.balance >= 0 ? parseAmount(r[m.balance]) : null;
     out.push({ row: i, date, amount: amt, desc, balance: bal });
   }
@@ -288,7 +288,7 @@ const RULES = [
   ["Faturalar", ["ELEKTRIK", "ENERJISA", "CK ENERJI", "AYEDAS", "BEDAS", "IGDAS", "DOGALGAZ", "DOGAL GAZ", "ISKI", "ASKI", "IZSU", "SU IDARESI", "TURKCELL", "VODAFONE", "TURK TELEKOM", "TT MOBIL", "SUPERONLINE", "TURKNET", "D-SMART", "DIGITURK", "FATURA"]],
   ["Banka masrafı", ["MASRAF", "BSMV", "KART AIDATI", "HESAP ISLETIM", "EFT UCRETI", "HAVALE UCRETI", "KOMISYON"]],
   ["Lojistik", ["KARGO", "YURTICI", "ARAS ", "MNG", "PTT", "SURAT", "HEPSIJET", "TRENDYOL EXPRESS"]],
-  ["Market / Gıda", ["MIGROS", "A101", "BIM ", "SOK MARKET", "SOK ", "CARREFOUR", "MACROCENTER", "FILE ", "METRO ", "HAKMAR", "GETIR", "YEMEKSEPETI", "TRENDYOL YEMEK", "TRENDYOL GO", "RESTORAN", "LOKANTA", "CAFE", "KAFE", "STARBUCKS", "KAHVE", "BURGER", "PIZZA", "DONER", "FIRIN", "PASTANE", "SIMIT", "KASAP", "MANAV"]],
+  ["Market / Gıda", ["GIDA", "EKMEK", "UNLU MAMUL", "SUT ", "MANDIRA", "SARKUTERI", "BAKKAL", "TEKEL", "POPEYES", "BURGER KING", "MCDONALDS", "KFC", "DOMINOS", "LITTLE CAESARS", "SUBWAY", "SBARRO", "ARBYS", "USTA DONERCI", "KOFTECI", "BALIK", "TATLI", "BAKLAVA", "MIGROS", "A101", "BIM ", "SOK MARKET", "SOK ", "CARREFOUR", "MACROCENTER", "FILE ", "METRO ", "HAKMAR", "GETIR", "YEMEKSEPETI", "TRENDYOL YEMEK", "TRENDYOL GO", "RESTORAN", "LOKANTA", "CAFE", "KAFE", "STARBUCKS", "KAHVE", "BURGER", "PIZZA", "DONER", "FIRIN", "PASTANE", "SIMIT", "KASAP", "MANAV"]],
   ["Ulaşım", ["AKARYAKIT", "SHELL", "OPET", "PETROL OFISI", " PO ", "BP ", "TOTAL", "AYTEMIZ", "HGS", "OGS", "ISTANBULKART", "UBER", "BITAKSI", "TAKSI", "OTOPARK", "ISPARK", "MARTI", "THY", "PEGASUS", "AJET", "OTOBUS", "METRO TURIZM", "PAMUKKALE", "KAMIL KOC", "LASTIK", "OTO SERVIS"]],
   ["Giyim", ["LC WAIKIKI", "LCW", "DEFACTO", "KOTON", "ZARA", "H&M", "H M ", "MAVI", "COLINS", "COLIN S", "BOYNER", "FLO ", "INSTREET", "SKECHERS", "NIKE", "ADIDAS", "PUMA", "MANGO", "PULL&BEAR", "PULL AND BEAR", "BERSHKA", "STRADIVARIUS", "US POLO", "U.S. POLO", "NETWORK", "VAKKO", "BEYMEN", "DERIMOD", "PENTI", "SUWEN", "MARKS SPENCER", "LTB", "JACK JONES", "DECATHLON", "SPORTIVE", "AYAKKABI", "GIYIM", "TEKSTIL"]],
   ["Yapı market / Ev", ["KOCTAS", "BAUHAUS", "IKEA", "TEKZEN", "PRAKTIKER", "ENGLISH HOME", "MADAME COCO", "KARACA", "EVIDEA", "PASABAHCE", "YAPI MARKET", "HIRDAVAT", "BOYA", "MOBILYA", "ISTIKBAL", "BELLONA", "DOGTAS", "ENZA", "CILEK", "KELEBEK"]],
@@ -301,6 +301,7 @@ const RULES = [
   ["Yazılım", ["GOOGLE", "APPLE.COM", "ITUNES", "MICROSOFT", "ADOBE", "CANVA", "ANTHROPIC", "CLAUDE", "OPENAI", "CHATGPT", "GITHUB", "ZOOM", "NOTION", "DROPBOX"]],
   ["Online alışveriş", ["TRENDYOL", "HEPSIBURADA", "AMAZON", "N11", "CICEKSEPETI", "TEMU", "ALIEXPRESS", "SHEIN", "PTTAVM", "MORHIPO", "IYZICO", "PAYTR"]],
   ["Ofis", ["KIRTASIYE", "OFIS", "OFFICE"]],
+  ["Market / Gıda", ["MARKET", "MARKT", "SUPERMARKET", "HIPERMARKET"]],
   ["Banka masrafı", ["UCRET"]]
 ];
 const RULES_IN = [
@@ -308,8 +309,21 @@ const RULES_IN = [
   ["Komisyon", ["PRIM", "KOMISYON", "BONUS"]],
   ["Satış", ["SATIS", "TAHSILAT", "POS"]]
 ];
-export const learnKey = d => norm(d).replace(/[0-9*#:/\\.,-]+/g, " ").replace(/\s+/g, " ").trim().split(" ").slice(0, 3).join(" ");
+// Banka açıklamalarındaki referans kodlarını ve kalıp sözcükleri temizler:
+// "A00QU Firma Adı: ODEAL//UCUZLER MARKET ANKARA,Harcama" -> "UCUZLER MARKET ANKARA"
+export function cleanDesc(d) {
+  let t = String(d ?? "").replace(/\s+/g, " ").trim();
+  t = t.replace(/^(?=[A-Z0-9]{4,8}\b)(?=[A-Z0-9]*\d)[A-Z0-9]{4,8}\s+/i, "");           // baştaki referans kodu (A00QU, 123456)
+  t = t.replace(/\b(firma ad[ıi]|i[şs]yeri( ad[ıi])?|al[ıi]c[ıi]|g[öo]nderen|a[çc][ıi]klama)\s*:\s*/gi, "");
+  t = t.replace(/\b(ODEAL|IYZICO|IYZ|PAYTR|PARAM|PAPARA|SIPAY|MOKA|ESNEKPOS|PAYU|STRIPE|PAYPAL)\s*(\/\/|\*|\/)\s*/gi, "");
+  t = t.replace(/[,;\s]+(harcama|al[ıi]şveri[şs]|i[şs]lem|[öo]deme|provizyon|pe[şs]in|taksitli)\s*$/i, "");
+  t = t.replace(/^(pos|sanal pos|internet|e-ticaret|kart)\s*[-:]?\s+(?=\S)/i, "");
+  t = t.replace(/\s*\*{2,}\d+\s*/g, " ").replace(/\s+/g, " ").replace(/^[,;:\-\s]+|[,;:\-\s]+$/g, "").trim();
+  return t || String(d ?? "").trim();
+}
+export const learnKey = d => norm(cleanDesc(d)).replace(/[0-9*#:/\\.,-]+/g, " ").replace(/\s+/g, " ").trim().split(" ").slice(0, 3).join(" ");
 export function guessCategory(desc, amount, learned) {
+  desc = cleanDesc(desc);
   const k = learnKey(desc); if (k && learned[k]) return learned[k];
   const d = " " + norm(desc) + " ";
   for (const [cat, keys] of amount > 0 ? RULES_IN : RULES) if (keys.some(x => d.includes(x))) return cat;

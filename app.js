@@ -504,8 +504,9 @@ function renderChips() {
   if (!navigator.onLine) h += `<span class="chip"><span class="dot busy"></span>Çevrimdışı</span>`;
   else if (live()) h += `<span class="chip" title="Aynı Google hesabıyla girdiğin tüm cihazlarda değişiklikler anında görünür"><span class="dot ok live"></span>Canlı senkron</span>`;
   if (live()) {
-    const s = Drive.state, cls = s === "ok" ? "ok" : s === "busy" ? "busy" : s === "err" || s === "need" ? "err" : "";
-    const t = s === "ok" ? (Drive.lastBackup ? `Drive · ${tfmt.format(new Date(Drive.lastBackup))}` : "Drive · hazır") : s === "busy" ? "Drive · kaydediliyor" : s === "need" ? "Drive · izin gerekli" : s === "err" ? "Drive · sorun var" : "Drive";
+    const s = Drive.state, ageH = Drive.lastBackup ? (Date.now() - new Date(Drive.lastBackup)) / 3600e3 : 999;
+    const cls = s === "ok" ? "ok" : s === "busy" ? "busy" : s === "err" ? "err" : s === "need" ? (ageH < 24 ? "ok" : "busy") : "";
+    const t = s === "busy" ? "Drive · kaydediliyor" : s === "err" ? "Drive · sorun var" : Drive.lastBackup ? `Drive · ${ageH < 24 ? "yedek " + tfmt.format(new Date(Drive.lastBackup)) : "yedek eski"}` : s === "need" ? "Drive · yedekle" : "Drive · hazır";
     h += `<button class="chip" type="button" data-act="drive"><span class="dot ${cls}"></span>${t}</button>`;
   }
   if (usesForeign()) { const src = Object.keys(RATES.auto).length ? (RATES.failed ? "err" : "ok") : "busy"; h += `<button class="chip" type="button" data-act="rates"><span class="dot ${src}"></span>Kurlar${RATES.date ? " · " + esc(String(RATES.date).slice(11, 16)) : ""}</button>`; }
@@ -623,6 +624,7 @@ function viewIslemler() {
   }
   return `<section class="panel"><div class="ph"><div><h2>İşlemler</h2><p>${rows.length} kayıt · <span class="pos">${money(inc)}</span> gelir · <span class="neg">${money(exp)}</span> gider</p></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="import-stmt">⇣ Ekstre içe aktar</button>${S.txns.some(t => t.importKey) ? `<button class="btn" data-act="imports">Yüklenen ekstreler</button>` : ""}<button class="btn primary" data-act="new-txn">+ İşlem</button></div></div>
+    ${otherTxs().length >= 3 ? `<div class="notice warn" style="margin:0 0 10px"><span><b>${otherTxs().length} işlem "Diğer" kategorisinde.</b> Ekstre açıklamalarından kategorileri yeniden tahmin edebilirim.</span><button class="btn small primary" data-act="recat">Otomatik kategorilendir</button></div>` : ""}
     <div class="filters"><input id="fq" type="search" placeholder="Ara: kategori, cari, not, tutar" value="${esc(ui.q)}" aria-label="İşlemlerde ara">
     <select id="ftype" aria-label="Tür"><option value="">Tüm türler</option>${["gelir", "gider", "transfer"].map(x => `<option value="${x}" ${ui.ftype === x ? "selected" : ""}>${x[0].toLocaleUpperCase("tr") + x.slice(1)}</option>`).join("")}</select>
     <select id="facc" aria-label="Hesap"><option value="">Tüm hesaplar</option>${accountGroups().map(g => `<optgroup label="${esc(g.name)}"><option value="g:${esc(g.name)}" ${ui.facc === "g:" + g.name ? "selected" : ""}>${esc(g.name)} · tümü</option>${g.list.map(a => `<option value="${esc(a.id)}" ${ui.facc === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</optgroup>`).join("")}</select></div>
@@ -996,6 +998,7 @@ function importBatches() {
 function importsPanel() {
   const bs = importBatches();
   openSheet("Yüklenen ekstreler", `<div class="form">
+    ${otherTxs().length ? `<button class="btn" type="button" data-act="recat" style="justify-self:start">"Diğer"deki ${otherTxs().length} işlemi otomatik kategorilendir</button>` : ""}
     <p style="margin:0">Yanlış hesaba ya da yanlış ekstre yüklediysen ilgili satıra dokun; işlemleri toplu <b>silebilir</b> veya <b>doğru hesaba taşıyabilirsin</b>.</p>
     <div class="list">${bs.map(b => { const ac = acc(b.accountId);
       return `<div class="row click" data-batch="${esc(b.key)}"><div style="min-width:0"><div class="t">${esc(b.legacy ? "Önceki içe aktarımlar" : (b.file || "Ekstre"))}</div>
@@ -1046,6 +1049,46 @@ async function batchApply(kind, btn) {
   }
   toast(kind === "del" ? `${list.length} işlem silindi` : `${list.length} işlem ${accName(acc($("#b-target").value))} hesabına taşındı`);
   closeSheet();
+}
+
+/* --- toplu kategori düzeltme --- */
+function learnedMap() {
+  const m = {}; S.txns.slice().sort((a, b) => a.date < b.date ? -1 : 1).forEach(t => { if (t.note && t.category && !/^Diğer/.test(t.category) && t.type !== "transfer") m[IMP.learnKey(t.note)] = t.category + (t.sub ? "|" + t.sub : ""); }); return m;
+}
+const otherTxs = () => S.txns.filter(t => t.importKey && t.type !== "transfer" && /^Diğer (gider|gelir)$/.test(t.category || ""));
+async function recategorize() {
+  const learned = learnedMap(), ops = []; let n = 0;
+  for (const t of S.txns.filter(t => t.importKey && t.type !== "transfer")) {
+    const note = IMP.cleanDesc(t.note || ""); const isOther = /^Diğer/.test(t.category || "");
+    const upd = { ...t, note };
+    if (isOther) {
+      let g = IMP.guessCategory(note, t.type === "gelir" ? 1 : -1, learned);
+      if (!g.includes("|")) { const gs = IMP.guessSub(note); if (gs && subsOf(t.type, g).includes(gs)) g += "|" + gs; }
+      const [c, sub = ""] = g.split("|"); if (c !== t.category) { upd.category = c; upd.sub = sub; n++; }
+    }
+    if (upd.note !== t.note || upd.category !== t.category) { const { id, ...d } = upd; ops.push({ type: "set", col: "txns", id, data: d }); }
+  }
+  if (!ops.length) { toast("Yeni tahmin edilebilecek kategori bulunamadı."); return; }
+  if (live()) { if (!(await safe(() => batchWrite(ops)))) return; Drive.dirty(); }
+  else { ops.forEach(o => { const i = S.txns.findIndex(t => t.id === o.id); S.txns[i] = { id: o.id, ...o.data }; }); saveDemo(); render(); }
+  const left = otherTxs().length;
+  toast(`${n} işleme kategori verildi${left ? `; ${left} işlem hâlâ "Diğer"de` : ""}`);
+}
+function offerBulk(t, oldCat) {
+  const k = IMP.learnKey(t.note || ""); if (!k || !t.note) return;
+  const same = S.txns.filter(x => x.id !== t.id && x.type === t.type && x.note && IMP.learnKey(x.note) === k && x.category === oldCat);
+  if (!same.length) return;
+  ui.bulk = { ids: same.map(x => x.id), category: t.category, sub: t.sub || "" };
+  openSheet("Benzer işlemler", `<div class="form"><p style="margin:0"><b>${esc(IMP.cleanDesc(t.note))}</b> için ${same.length} işlem daha var ve hepsi "${esc(oldCat)}" kategorisinde.</p>
+    <p style="margin:0">Hepsini <b>${esc(catLabel(t))}</b> yapayım mı? Gelecek ekstrelerde de bu yer otomatik bu kategoriye düşer.</p>
+    <div class="foot"><span></span><div class="r"><button class="btn" data-close>Hayır, sadece bunu</button><button class="btn primary" data-act="bulk-apply">Hepsini değiştir (${same.length})</button></div></div></div>`);
+}
+async function bulkApply() {
+  const B = ui.bulk; if (!B) return closeSheet();
+  const ops = B.ids.map(id => S.txns.find(t => t.id === id)).filter(Boolean).map(t => { const { id, ...d } = { ...t, category: B.category, sub: B.sub }; return { type: "set", col: "txns", id, data: d }; });
+  if (live()) { if (!(await safe(() => batchWrite(ops)))) return; Drive.dirty(); }
+  else { ops.forEach(o => { const i = S.txns.findIndex(t => t.id === o.id); S.txns[i] = { id: o.id, ...o.data }; }); saveDemo(); render(); }
+  toast(`${ops.length} işlem güncellendi`); ui.bulk = null; closeSheet();
 }
 
 function accountPanel() {
@@ -1116,14 +1159,14 @@ function drivePanel() {
   const d = Drive;
   const body = `<div class="form" id="drivePanel">
     <p style="margin:0">Her değişiklikten birkaç saniye sonra tüm kayıtların Google Drive'ındaki <b>${DRIVE_FOLDER}</b> klasörüne <b>${DRIVE_FILE}</b> olarak kaydedilir. Tek bir dosya tutulur ve her seferinde güncellenir.</p>
-    <dl class="kv"><dt>Durum</dt><dd>${d.state === "ok" ? '<span class="pos">Bağlı</span>' : d.state === "busy" ? '<span style="color:var(--warn)">' + esc(d.msg || "Çalışıyor") + "</span>" : d.state === "need" ? '<span class="neg">Drive izninin süresi doldu (izin 1 saat geçerli). Aşağıdan yenile.</span>' : d.state === "err" ? '<span class="neg">' + esc(d.msg) + "</span>" : "Kapalı"}</dd>
+    <dl class="kv"><dt>Durum</dt><dd>${d.state === "ok" ? '<span class="pos">Bağlı</span>' : d.state === "busy" ? '<span style="color:var(--warn)">' + esc(d.msg || "Çalışıyor") + "</span>" : d.state === "need" ? (d.lastBackup && Date.now() - new Date(d.lastBackup) < 24 * 3600e3 ? '<span class="pos">Yedek güncel</span> <span class="muted">· yeni değişiklikler bir sonraki yedekte Drive\'a gider</span>' : '<span style="color:var(--warn)">Son yedek 1 günden eski. Aşağıdan tek dokunuşla yedekle.</span>') : d.state === "err" ? '<span class="neg">' + esc(d.msg) + "</span>" : "Kapalı"}</dd>
     <dt>Son yedek</dt><dd>${d.lastBackup ? tfmt.format(new Date(d.lastBackup)) : "Henüz yok"}</dd>
     ${d.fileId ? `<dt>Dosya</dt><dd><a href="https://drive.google.com/file/d/${esc(d.fileId)}/view" target="_blank" rel="noopener" style="color:var(--accent)">Drive'da aç</a></dd>` : ""}</dl>
     <div class="foot" style="justify-content:flex-start;flex-wrap:wrap">
-      <button class="btn primary" data-act="drive-save" ${d.busy ? "disabled" : ""}>${d.valid() ? "Şimdi Drive'a kaydet" : "Drive iznini yenile ve kaydet"}</button>
+      <button class="btn primary" data-act="drive-save" ${d.busy ? "disabled" : ""}>Şimdi Drive'a yedekle</button>
       <span id="restoreSlot"><button class="btn" data-act="drive-restore">Drive'dan geri yükle</button></span>
     </div>
-    <p class="muted" style="margin:0;font-size:.82rem">Google, güvenlik gereği Drive iznini 1 saatte bir yeniletir. İzin dolduğunda kayıtların yine telefonda ve bulutta (Firebase) güvende; sadece Drive kopyası bir sonraki yenilemeye kadar bekler.</p></div>`;
+    <p class="muted" style="margin:0;font-size:.82rem">Kayıtların her zaman bulutta (Firebase) anlık olarak saklanır; Drive'daki dosya ek bir yedektir. Google, tarayıcıdan verilen Drive iznini güvenlik gereği 1 saatte bir sona erdirdiği için uygulama Drive yedeğini açık olduğu sürede otomatik alır, sonra günde bir hatırlatır.</p></div>`;
   if ($("#drivePanel")) $("#drivePanel").outerHTML = body; else openSheet("Google Drive yedeği", body);
 }
 
@@ -1320,6 +1363,7 @@ function submitForm(f) {
     ls.set("kd-last-acc", o.accountId);
     const old = S.txns.find(x => x.id === id); if (old && old.planId) o.planId = old.planId;
     put("txns", o); toast(id ? "İşlem güncellendi" : "İşlem kaydedildi"); closeSheet();
+    if (old && o.type !== "transfer" && (old.category !== o.category || (old.sub || "") !== (o.sub || ""))) setTimeout(() => offerBulk(o, old.category), 60);
   } else if (kind === "plan") {
     const old = S.plans.find(x => x.id === id);
     const c = resolveCat(f, v("#f-dir")); if (!c) { toast("Yeni kategorinin adını yaz."); return; }
@@ -1422,6 +1466,8 @@ document.addEventListener("click", async e => {
   if (a === "new-contact") return contactForm();
   if (a === "csv") return exportCsv();
   if (a === "imports") return importsPanel();
+  if (a === "recat") { el.disabled = true; el.textContent = "Kategoriler tahmin ediliyor…"; await recategorize(); closeSheet(); return; }
+  if (a === "bulk-apply") return bulkApply();
   if (a === "batch-del") return batchApply("del", el);
   if (a === "batch-move") return batchApply("move", el);
   if (a === "cats") { CM.edit = null; return catManager(); }
