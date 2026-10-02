@@ -1034,8 +1034,8 @@ function importBatches() {
   const m = new Map();
   for (const t of S.txns) {
     if (!t.importKey) continue;
-    const k = (t.importId || "eski") + "|" + t.accountId;
-    if (!m.has(k)) m.set(k, { key: k, legacy: !t.importId, file: t.importFile || "", at: t.importAt || "", accountId: t.accountId, txs: [] });
+    const ia = t.importAcc || t.accountId, k = (t.importId || "eski") + "|" + ia;
+    if (!m.has(k)) m.set(k, { key: k, legacy: !t.importId, file: t.importFile || "", at: t.importAt || "", accountId: ia, txs: [] });
     m.get(k).txs.push(t);
   }
   return [...m.values()].map(b => { const d = b.txs.map(t => t.date).sort(); return { ...b, from: d[0], to: d[d.length - 1], inc: sum(b.txs.filter(t => t.type === "gelir"), t => t.amount), exp: sum(b.txs.filter(t => t.type === "gider"), t => t.amount), prevOpening: b.txs.find(t => t.importPrevOpening != null)?.importPrevOpening }; })
@@ -1063,8 +1063,13 @@ function batchPanel(key) {
     <div class="list" style="max-height:40vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:0 8px">
       ${b.txs.slice().sort((x, y) => x.date < y.date ? -1 : 1).map(t => `<label class="row" style="grid-template-columns:auto minmax(0,1fr) auto;cursor:pointer"><input type="checkbox" class="b-sel" value="${esc(t.id)}" checked style="width:auto">
         <span style="min-width:0"><span class="t" style="display:block;font-size:.9rem">${esc(t.note || catLabel(t))}</span><span class="m">${dshort(t.date)} · ${esc(catLabel(t))}</span></span>
-        <span class="amt ${t.type === "gelir" ? "pos" : "neg"}" style="font-size:.9rem">${t.type === "gelir" ? "+" : "−"}${fmtAsset(t.amount, code)}</span></label>`).join("")}
+        ${(() => { const inn = t.type === "gelir" || (t.type === "transfer" && t.toAccountId === b.accountId), v = t.type === "transfer" && t.toAccountId === b.accountId ? (t.toAmount ?? t.amount) : t.amount;
+          return `<span class="amt ${inn ? "pos" : "neg"}" style="font-size:.9rem">${t.type === "transfer" ? "⇄ " : ""}${inn ? "+" : "−"}${fmtAsset(v, code)}</span>`; })()}</label>`).join("")}
     </div>
+    ${code !== "TRY" ? `<div style="display:grid;gap:8px;border-top:1px solid var(--line);padding-top:12px">
+      <b>Tutarlar TL olarak mı kaydedildi?</b>
+      <p class="small-note" style="margin:0">Örneğin 3 gr altın alımı ${fmtAsset(13000, code)} gibi görünüyorsa, seçilenleri ${esc(unitOf(code))} cinsine çevir. Miktar açıklamada yazıyorsa (ör. "3 GR") o kullanılır, yoksa güncel kurla (1 ${esc(unitOf(code))} = ${money(rateOf(code) || 0)}) hesaplanır.</p>
+      <div><button class="btn primary" type="button" data-act="batch-unit">Seçilenleri ${esc(unitOf(code))} cinsine çevir</button></div></div>` : ""}
     <div style="display:grid;gap:8px;border-top:1px solid var(--line);padding-top:12px">
       <b>Doğru hesaba taşı</b>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><select id="b-target" style="flex:1 1 200px">${accOpts(S.accounts.find(x => x.id !== b.accountId)?.id)}</select><button class="btn primary" type="button" data-act="batch-move">Seçilenleri taşı</button></div>
@@ -1081,19 +1086,26 @@ async function batchApply(kind, btn) {
   const list = b.txs.filter(t => ids.has(t.id)); if (!list.length) { toast("Önce işlem seç."); return; }
   if (kind === "del" && btn.dataset.armed !== "1") { btn.dataset.armed = "1"; btn.textContent = `Evet, ${list.length} işlemi sil`; return; }
   const ops = [];
-  if (kind === "del") {
+  if (kind === "unit") {
+    const code = accAsset(acc(b.accountId));
+    list.forEach(t => { if (t.type === "transfer") return; const c = tlToUnit(+t.amount, t.note || "", code); if (!c.qty) return;
+      const parts = (t.importKey || "").split("|"); if (parts.length >= 3) parts[2] = String((+parts[2] < 0 ? -1 : 1) * c.qty);
+      const { id, ...d } = { ...t, amount: c.qty, rate: c.price, tlAmount: +t.amount, importKey: parts.join("|") }; ops.push({ type: "set", col: "txns", id, data: d }); });
+    if (!ops.length) { toast("Kur bulunamadı; Kurlar'dan fiyat gir."); return; }
+  } else if (kind === "del") {
     list.forEach(t => ops.push({ type: "delete", col: "txns", id: t.id }));
     const ac = acc(b.accountId); if ($("#b-restore")?.checked && ac) { const { id, ...d } = { ...ac, opening: b.prevOpening }; ops.push({ type: "set", col: "accounts", id, data: d }); }
   } else {
     const to = $("#b-target").value; if (to === b.accountId) { toast("Farklı bir hesap seç."); return; }
-    list.forEach(t => { const { id, importPrevOpening, ...d } = { ...t, accountId: to, importKey: t.importKey.replace(/^[^|]+/, to) }; ops.push({ type: "set", col: "txns", id, data: d }); });
+    list.forEach(t => { const side = t.importAcc && t.toAccountId === t.importAcc ? { toAccountId: to } : { accountId: to };
+      const { id, importPrevOpening, ...d } = { ...t, ...side, ...(t.importAcc ? { importAcc: to } : {}), importKey: t.importKey.replace(/^[^|]+/, to) }; ops.push({ type: "set", col: "txns", id, data: d }); });
   }
   if (live()) { if (!(await safe(() => batchWrite(ops)))) return; Drive.dirty(); }
   else {
     for (const o of ops) { if (o.type === "delete") S.txns = S.txns.filter(t => t.id !== o.id); else if (o.col === "txns") { const i = S.txns.findIndex(t => t.id === o.id); S.txns[i] = { id: o.id, ...o.data }; } else { const ac = acc(o.id); Object.assign(ac, o.data); } }
     saveDemo(); render();
   }
-  toast(kind === "del" ? `${list.length} işlem silindi` : `${list.length} işlem ${accName(acc($("#b-target").value))} hesabına taşındı`);
+  toast(kind === "unit" ? `${ops.length} işlem ${unitOf(accAsset(acc(b.accountId)))} cinsine çevrildi` : kind === "del" ? `${list.length} işlem silindi` : `${list.length} işlem ${accName(acc($("#b-target").value))} hesabına taşındı`);
   closeSheet();
 }
 
@@ -1245,7 +1257,7 @@ async function readStatement(file, password) {
     const sig = IMP.headerSignature(headers);
     let map = null; try { map = JSON.parse(ls.get("kd-map:" + sig) || "null"); } catch (e) { }
     if (!map) { map = IMP.guessMapping(headers, rows.slice(hIdx + 1)); const ex = IMP.extract(rows, hIdx, map); if (acc(imp.accountId)?.kind === "kredi kartı" && ex.length && ex.filter(x => x.amount > 0).length > ex.length * 0.6) map.invert = true; }
-    Object.assign(imp, { fileName: file.name, rows, hIdx, headers, sig, map, fixOpening: false });
+    Object.assign(imp, { fileName: file.name, rows, hIdx, headers, sig, map, fixOpening: false, unitFor: null, unitMode: null, tradeAcc: tradeAccDefault(acc(imp.accountId)) });
     buildImpItems(); clearTimeout(tt); $("#toastRoot").innerHTML = ""; renderImport();
   } catch (e) {
     if (e instanceof IMP.PdfPasswordError) { clearTimeout(tt); $("#toastRoot").innerHTML = ""; return askPdfPassword(e.wrong); }
@@ -1261,8 +1273,41 @@ function askPdfPassword(wrong) {
     <div class="foot"><span></span><div class="r"><button type="button" class="btn" data-close>Vazgeç</button><button class="btn primary" type="submit">Aç</button></div></div></form>`);
   setTimeout(() => $("#pdf-pw")?.focus(), 50);
 }
+// Döviz/altın hesabına ekstre: tutar hesap biriminde mi (gr, adet, $) yoksa TL mi?
+function impUnitSetup() {
+  const a = acc(imp.accountId), code = accAsset(a), m = imp.map, H = (imp.headers || []).map(h => IMP.up(h));
+  if (code === "TRY") return { code, mode: "unit" };
+  if (imp.unitFor !== code) { // yeni dosya / hesap: otomatik karar
+    imp.unitFor = code;
+    const amtH = H[m.mode === "split" ? m.debit : m.amount] || "";
+    const qc = m.qtyCol >= 0 && m.qtyCol !== m.amount && m.qtyCol !== m.debit && m.qtyCol !== m.credit ? m.qtyCol : -1;
+    if (qc >= 0) imp.unitMode = "col";
+    else if (/\b(TL|TRY)\b/.test(amtH)) imp.unitMode = "tl";
+    else {
+      const ex = IMP.extract(imp.rows, imp.hIdx, m, { qty: true }).map(x => Math.abs(x.amount)).sort((x, y) => x - y);
+      const med = ex.length ? ex[Math.floor(ex.length / 2)] : 0, grp = assetOf(code)[3], u = unitOf(code);
+      imp.unitMode = grp !== "Para" && med > (u === "adet" ? 20 : 100) ? "tl" : "unit";
+    }
+  }
+  return { code, mode: imp.unitMode || "unit" };
+}
+// TL tutarı hesap birimine çevir: önce açıklamadaki miktar (3 GR), yoksa güncel kur
+function tlToUnit(tl, desc, code) {
+  const d = IMP.qtyFromDesc(desc), r = rateOf(code) || 0;
+  const qty = d || (r ? Math.round(tl / r * 1000) / 1000 : 0);
+  return { qty, price: qty ? Math.round(tl / qty * 100) / 100 : r, fromDesc: !!d };
+}
+const TRADE_RX = /\b(ALIS|ALIM|SATIS|SATIM|BOZDUR|DONUSUM|ALTIN AL|DOVIZ AL|DOVIZ SAT|ALTIN SAT)/;
+function tradeAccDefault(a) { const t = S.accounts.filter(x => accAsset(x) === "TRY" && !isCredit(x)); return (t.find(x => groupOf(x) === groupOf(a)) || t[0] || {}).id || ""; }
 function buildImpItems() {
-  const ext = IMP.extract(imp.rows, imp.hIdx, imp.map);
+  const U = impUnitSetup(), m = imp.map;
+  let ext = IMP.extract(imp.rows, imp.hIdx, m, U.code === "TRY" ? {} : { qty: U.mode === "unit", qtyCol: U.mode === "col" ? m.qtyCol : -1 });
+  if (U.code !== "TRY" && U.mode !== "unit") ext = ext.map(x => {
+    const sg = x.amount < 0 ? -1 : 1, tl = Math.abs(x.amount);
+    if (U.mode === "col" && x.q) return { ...x, amount: sg * x.q, tl, price: Math.round(tl / x.q * 100) / 100 };
+    const c = tlToUnit(tl, x.rawDesc || x.desc, U.code); if (!c.qty) return null;
+    return { ...x, amount: sg * c.qty, tl, price: c.price, est: !c.fromDesc, balance: null };
+  }).filter(Boolean);
   const learned = {};
   const byContact = {};
   S.txns.slice().sort((a, b) => a.date < b.date ? -1 : 1).forEach(t => {
@@ -1279,12 +1324,14 @@ function buildImpItems() {
     const key = base + "|" + occ[base];
     const type = x.amount > 0 ? "gelir" : "gider", amt = Math.abs(x.amount);
     const exact = keys.has(key);
-    const maybe = !exact && S.txns.some(t => t.accountId === imp.accountId && t.date === x.date && t.type === type && Math.abs(t.amount - amt) < 0.01);
+    const maybe = !exact && S.txns.some(t => t.date === x.date && (t.accountId === imp.accountId && t.type === type && Math.abs(t.amount - amt) < 0.01
+      || t.type === "transfer" && (type === "gider" && t.accountId === imp.accountId && Math.abs(t.amount - amt) < 0.01 || type === "gelir" && t.toAccountId === imp.accountId && Math.abs((t.toAmount ?? t.amount) - amt) < 0.01)));
     const D = IMP.up(x.desc), ct = contacts.find(c => D.includes(c.n));
     const isCard = acc(imp.accountId)?.kind === "kredi kartı";
     if (isCard && x.amount > 0 && /ODEME|ÖDEME|TESEKKUR|TEŞEKKÜR|PAYMENT|HESAPTAN/i.test(IMP.up(x.desc))) {
       return { ...x, key, type, amt, dup: "kart", sel: false, cat: "Diğer gelir", contactId: "" };
     }
+    if (U.code !== "TRY" && TRADE_RX.test(D)) return { ...x, key, type, amt, dup: exact ? "var" : maybe ? "olası" : "", sel: !exact && !maybe, cat: type === "gelir" ? "Diğer gelir" : "Diğer gider", contactId: "", trade: true, tl: x.tl || Math.round(amt * (x.price || rateOf(U.code) || 0) * 100) / 100 };
     let cat = IMP.guessCategory(x.desc, x.amount, learned);
     if (ct && /^Diğer/.test(cat) && byContact[ct.id + "|" + type]) cat = byContact[ct.id + "|" + type];
     if (!cat.includes("|")) { const sg = IMP.guessSub(x.desc); if (sg && subsOf(type, cat).includes(sg)) cat += "|" + sg; }
@@ -1307,7 +1354,7 @@ function renderImport() {
   const items = imp.items, sel = items.filter(x => x.sel);
   const inc = sum(sel.filter(x => x.amount > 0), x => x.amount), exp = sum(sel.filter(x => x.amount < 0), x => -x.amount);
   const dates = items.map(x => x.date).sort();
-  const bi = impBalanceInfo();
+  const bi = impBalanceInfo(), IC = accAsset(acc(imp.accountId));
 
   const dupN = items.filter(x => x.dup && x.dup !== "kart").length;
   const body = `<div class="form" id="impPanel">
@@ -1323,6 +1370,12 @@ function renderImport() {
         <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="imp-inv" style="width:auto" ${m.invert ? "checked" : ""}> Gelir ve giderleri ters çevir <span class="muted">(kredi kartı ekstrelerinde harcamalar artı görünüyorsa)</span></label>
         <p class="small-note" style="margin:0">Bu eşleştirme bu bankanın dosyaları için hatırlanır.</p>
       </div></details>
+    ${(() => { const code = accAsset(acc(imp.accountId)); if (code === "TRY") return ""; const u = unitOf(code), est = items.filter(x => x.est).length;
+      return `<div style="display:grid;gap:8px;border:1px solid var(--line);border-radius:10px;padding:12px">
+      <label>Ekstredeki tutarlar hangi birimde?<select id="imp-unit">${opt([["unit", `${u} — hesabın kendi birimi`], ["tl", `TL — ${u} olarak çevir`], ...(imp.map.qtyCol >= 0 && ![imp.map.amount, imp.map.debit, imp.map.credit].includes(imp.map.qtyCol) ? [["col", `Miktar sütunu (${esc(imp.headers[imp.map.qtyCol] || "")}) + TL tutar`]] : [])], imp.unitMode || "unit")}</select></label>
+      ${items.some(x => x.trade) ? `<label>Alış / satışlar hangi TL hesabından?<select id="imp-trade"><option value="">— Transfer yapma, gelir/gider say —</option>${S.accounts.filter(x => accAsset(x) === "TRY" && !isCredit(x)).map(x => `<option value="${esc(x.id)}" ${x.id === imp.tradeAcc ? "selected" : ""}>${esc(accName(x))}</option>`).join("")}</select></label>
+      <p class="small-note" style="margin:0">${items.filter(x => x.trade).length} alış/satış satırı TL hesabıyla <b>transfer</b> olarak kaydedilir: alışta TL hesabından para çıkar, ${esc(unitOf(code))} bu hesaba girer. Gelir/gider raporlarını şişirmez. O TL hesabının ekstresini sonra yüklersen bu satırlar "olası tekrar" diye işaretlenir.</p>` : ""}
+      <p class="small-note" style="margin:0">Hesap ${esc(assetOf(code)[1])} cinsinden; işlemler <b>${u}</b> olarak kaydedilir. ${imp.unitMode === "tl" ? `Miktar açıklamada yazıyorsa (ör. "3 GR") o alınır, yazmıyorsa güncel kurla (1 ${u} = ${money(rateOf(code) || 0)}) hesaplanır${est ? `; <b>${est} satır kurla tahmin edildi</b>, kontrol et` : ""}.` : imp.unitMode === "col" ? "Miktar ilgili sütundan, alış fiyatı TL tutardan alınır." : `Tutarlar ${u} değil de TL ise yukarıdan "TL" seç.`}</p></div>`; })()}
     ${isCredit(acc(imp.accountId)) ? `<div style="display:grid;gap:8px;border:1px solid var(--line);border-radius:10px;padding:12px">
       <b style="font-size:.92rem">Kart limiti</b>
       <div class="f2"><label>Toplam limit (₺)<input id="imp-limit" inputmode="decimal" value="${imp.limit != null ? amtStr(imp.limit) : acc(imp.accountId).limit ? amtStr(acc(imp.accountId).limit) : ""}" placeholder="Örn. 90.000"></label>
@@ -1330,18 +1383,18 @@ function renderImport() {
       <div class="f2"><label>Dönem içi harcamalar (₺)<input id="imp-spent" inputmode="decimal" value="${imp.spent != null && !isNaN(imp.spent) ? amtStr(imp.spent) : ""}" placeholder="Örn. 48.534,82"></label>
       <label>Hesap kesim günü<input id="imp-cut" inputmode="numeric" value="${imp.cut || acc(imp.accountId).cutDay || ""}" placeholder="Örn. 15"></label></div>
       <p class="small-note" style="margin:0">Yazarsan kartın borcu bankadaki rakama sabitlenir; ekstredeki geçmiş harcamalar limiti ikinci kez düşürmez, sadece analizde kullanılır.</p></div>` : ""}
-    ${bi && !isCredit(acc(imp.accountId)) ? `<div class="notice ${Math.abs(bi.diff) < 0.01 ? "" : "warn"}" style="margin:0"><span>${Math.abs(bi.diff) < 0.01 ? `<b>Bakiye tutuyor.</b> Bankadaki bakiye (${dshort(bi.date)}) ile uygulamadaki bakiye aynı: <b class="num">${money(bi.bank)}</b>` : `<b>Bakiye farkı var.</b> Bankada <b class="num">${money(bi.bank)}</b>, içe aktarma sonrası uygulamada <b class="num">${money(bi.after)}</b> olacak (fark ${signed(bi.diff)}).<br><label style="display:flex;gap:8px;align-items:center;margin-top:6px;color:var(--ink);font-size:.9rem"><input type="checkbox" id="imp-fix" style="width:auto" ${imp.fixOpening ? "checked" : ""}> Açılış bakiyesini düzelterek eşitle (${money((+acc(imp.accountId).opening || 0) + bi.diff)})</label>`}</span></div>` : ""}
+    ${bi && !isCredit(acc(imp.accountId)) ? `<div class="notice ${Math.abs(bi.diff) < 0.01 ? "" : "warn"}" style="margin:0"><span>${Math.abs(bi.diff) < 0.01 ? `<b>Bakiye tutuyor.</b> Bankadaki bakiye (${dshort(bi.date)}) ile uygulamadaki bakiye aynı: <b class="num">${fmtAsset(bi.bank, IC)}</b>` : `<b>Bakiye farkı var.</b> Bankada <b class="num">${fmtAsset(bi.bank, IC)}</b>, içe aktarma sonrası uygulamada <b class="num">${fmtAsset(bi.after, IC)}</b> olacak (fark ${IC === "TRY" ? signed(bi.diff) : fmtAsset(bi.diff, IC)}).<br><label style="display:flex;gap:8px;align-items:center;margin-top:6px;color:var(--ink);font-size:.9rem"><input type="checkbox" id="imp-fix" style="width:auto" ${imp.fixOpening ? "checked" : ""}> Açılış bakiyesini düzelterek eşitle (${fmtAsset((+acc(imp.accountId).opening || 0) + bi.diff, IC)})</label>`}</span></div>` : ""}
     ${impAnalysis(sel)}
     ${items.length ? `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
       <label style="display:flex;gap:8px;align-items:center;font-size:.88rem"><input type="checkbox" id="imp-all" style="width:auto" ${sel.length === items.length ? "checked" : ""}> Tümünü seç</label>
-      <span class="num" style="font-size:.88rem"><span class="pos">+${money(inc)}</span> · <span class="neg">−${money(exp)}</span></span></div>
+      <span class="num" style="font-size:.88rem"><span class="pos">+${fmtAsset(inc, IC)}</span> · <span class="neg">−${fmtAsset(exp, IC)}</span></span></div>
     <div class="list" style="max-height:48vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:0 8px">
       ${items.slice(0, 600).map((x, i) => `<div class="row" style="grid-template-columns:auto minmax(0,1fr) auto;opacity:${x.sel ? 1 : .55}">
         <input type="checkbox" class="imp-sel" data-i="${i}" ${x.sel ? "checked" : ""} style="width:auto" aria-label="Seç">
         <div style="min-width:0"><div class="t" style="font-size:.9rem;font-weight:500">${esc(x.desc || "(açıklama yok)")}</div>
           <div class="m">${dshort(x.date)}${x.dup ? ` · <span style="color:var(--warn)">${x.dup === "var" ? "zaten eklendi" : x.dup === "kart" ? "kart ödemesi: gelir değil, bankadan karta transfer olarak gir" : "olası tekrar"}</span>` : ""}${x.contactId ? ` · ${esc(con(x.contactId)?.name || "")}` : ""}</div>
-          <select class="imp-cat" data-i="${i}" style="margin-top:4px;padding:4px 6px;font-size:.82rem;width:auto;max-width:100%">${impCatOptions(x.type, x.cat)}</select></div>
-        <div class="amt ${x.amount > 0 ? "pos" : "neg"}" style="font-size:.92rem">${x.amount > 0 ? "+" : "−"}${money(x.amt)}</div></div>`).join("")}
+          ${x.trade && imp.tradeAcc ? `<span class="pill acc" style="margin-top:4px;display:inline-block">⇄ ${x.amount > 0 ? "←" : "→"} ${esc(accName(acc(imp.tradeAcc)) || "")}</span>` : `<select class="imp-cat" data-i="${i}" style="margin-top:4px;padding:4px 6px;font-size:.82rem;width:auto;max-width:100%">${impCatOptions(x.type, x.cat)}</select>`}</div>
+        <div class="amt ${x.amount > 0 ? "pos" : "neg"}" style="font-size:.92rem;text-align:right">${x.amount > 0 ? "+" : "−"}${fmtAsset(x.amt, IC)}${IC !== "TRY" ? `<div class="muted" style="font-size:.74rem;font-weight:400">${x.tl ? money(x.tl) : "≈ " + money(x.amt * (rateOf(IC) || 0))}${x.est ? " · kurla" : ""}</div>` : ""}</div></div>`).join("")}
     </div>${items.length > 600 ? `<p class="small-note">İlk 600 satır gösteriliyor; hepsi eklenecek.</p>` : ""}` : ""}
     <div class="foot"><button type="button" class="btn" data-act="import-stmt">Başka dosya</button><div class="r"><button type="button" class="btn" data-close>Vazgeç</button>
       <button type="button" class="btn primary" data-act="imp-commit" ${sel.length || imp.fixOpening ? "" : "disabled"}>${sel.length} işlemi ekle</button></div></div>
@@ -1350,6 +1403,7 @@ function renderImport() {
   else openSheet("Ekstreyi kontrol et", body);
 }
 function impAnalysis(sel) {
+  if (accAsset(acc(imp.accountId)) !== "TRY") return "";
   const ex = sel.filter(x => x.amount < 0); if (ex.length < 2) return "";
   const tot = sum(ex, x => x.amt), by = {}, merch = {};
   ex.forEach(x => { const c = x.cat.split("|")[0]; by[c] = (by[c] || 0) + x.amt; const k = IMP.learnKey(x.desc) || x.desc; (merch[k] = merch[k] || { n: 0, v: 0, d: x.desc }).n++; merch[k].v += x.amt; });
@@ -1377,7 +1431,13 @@ function impMapChanged() {
 async function commitImport() {
   const sel = imp.items.filter(x => x.sel), bi = impBalanceInfo();
   const code = accAsset(acc(imp.accountId)), batchId = uid8(), batchAt = new Date().toISOString();
-  const txs = sel.map(x => { const [category, sub] = x.cat.split("|"); const t = { id: uid8(), type: x.type, amount: x.amt, date: x.date, category, sub: sub || "", accountId: imp.accountId, contactId: x.contactId || "", note: x.desc.slice(0, 140), importKey: x.key, importId: batchId, importFile: (imp.fileName || "").slice(0, 80), importAt: batchAt }; if (code !== "TRY") t.rate = rateOf(code); return t; });
+  const txs = sel.map(x => { const [category, sub] = x.cat.split("|"); const t = { id: uid8(), type: x.type, amount: x.amt, date: x.date, category, sub: sub || "", accountId: imp.accountId, contactId: x.contactId || "", note: x.desc.slice(0, 140), importKey: x.key, importId: batchId, importFile: (imp.fileName || "").slice(0, 80), importAt: batchAt }; if (code !== "TRY") { t.rate = x.price || rateOf(code); if (x.tl) t.tlAmount = x.tl; }
+    if (x.trade && imp.tradeAcc && acc(imp.tradeAcc)) { // alış: TL hesabından → bu hesaba; satış: bu hesaptan → TL hesabına
+      Object.assign(t, { type: "transfer", category: "Transfer", sub: "", importAcc: imp.accountId }); delete t.rate;
+      if (x.amount > 0) Object.assign(t, { accountId: imp.tradeAcc, toAccountId: imp.accountId, amount: x.tl, toAmount: x.amt });
+      else Object.assign(t, { accountId: imp.accountId, toAccountId: imp.tradeAcc, amount: x.amt, toAmount: x.tl });
+    }
+    return t; });
   const a = acc(imp.accountId), fix = imp.fixOpening && bi && Math.abs(bi.diff) >= 0.01 ? Math.round(((+a.opening || 0) + bi.diff) * 100) / 100 : null;
   if (fix != null) txs.forEach(t => { t.importPrevOpening = +a.opening || 0; });
   let accUpd = null;
@@ -1540,6 +1600,7 @@ document.addEventListener("click", async e => {
   if (a === "bulk-apply") return bulkApply();
   if (a === "batch-del") return batchApply("del", el);
   if (a === "batch-move") return batchApply("move", el);
+  if (a === "batch-unit") return batchApply("unit", el);
   if (a === "cats") { CM.edit = null; return catManager(); }
   if (a === "rates") return ratesPanel();
   if (a === "rates-save") return saveManualRates();
@@ -1611,6 +1672,8 @@ document.addEventListener("change", async e => {
     else if (t.id === "imp-fix") { imp.fixOpening = t.checked; renderImport(); }
     else if (t.id === "imp-limit" || t.id === "imp-avail") { imp[t.id === "imp-limit" ? "limit" : "avail"] = parseAmt(t.value); }
     else if (t.id === "imp-spent") { imp.spent = parseAmt(t.value); }
+    else if (t.id === "imp-unit") { imp.unitMode = t.value; buildImpItems(); renderImport(); }
+    else if (t.id === "imp-trade") { imp.tradeAcc = t.value; renderImport(); }
     else if (t.id === "imp-cut") { imp.cut = parseInt(t.value, 10) || ""; }
     else if (/^imp-/.test(t.id)) impMapChanged();
   }

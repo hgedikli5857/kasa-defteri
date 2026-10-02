@@ -129,6 +129,8 @@ Hesap eklerken **Para / varlık cinsi** seç: TL, USD, EUR, GBP, CHF, SAR; gram 
 - Bakiye kendi biriminde tutulur, TL karşılığı canlı kurla (Truncgil Finans, alış fiyatı) hesaplanır. Başlıktaki **Kurlar** düğmesinden kuyumcu fiyatını elle girebilirsin.
 - Altın/döviz alımı: TL hesabından altın hesabına **Transfer** yap; "Giriş miktarı"nı (ör. 2 gr) yaz, birim fiyat gösterilir.
 - Döviz/altın hesabına gelir-gider girerken o günkü kur işleme kaydedilir; raporlar TL karşılığıyla hesaplanır.
+- **Altın/döviz hesabına ekstre:** Uygulama tutarların gram/adet mi TL mi olduğunu kendisi anlar ("Ekstredeki tutarlar hangi birimde?" ile değiştirilebilir). TL ise miktar açıklamadan ("3 GR") ya da kurla bulunur. Alış/satış satırları seçtiğin TL hesabıyla transfer olarak kaydedilir.
+- **Daha önce TL olarak yüklenmiş altın ekstresi:** İşlemler → Yüklenen ekstreler → ekstreyi seç → **Seçilenleri gr cinsine çevir**.
 
 ## Kategoriler ve alt kategoriler
 **Raporlar → Kategoriler** (ya da işlem formundaki "Kategorileri düzenle"): kategori ekle, adını değiştir (eski işlemler de güncellenir), sil; alt kategori ekle (ör. Faturalar → Elektrik). İşlem formunda "＋ Yeni kategori…" ile anında da eklenebilir.

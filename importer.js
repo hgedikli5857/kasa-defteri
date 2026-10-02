@@ -124,7 +124,7 @@ function linesToTable(lines) {
   return out;
 }
 // Başlık bulunamazsa: "tarih ... açıklama ... tutar [bakiye]" satırlarını yakala
-const MONEY = /[-+]?\(?\d{1,3}(?:\.\d{3})*,\d{2}\)?(?:\s*(?:TL|TRY|B|A|\+|-))?|[-+]?\d+,\d{2}(?:\s*(?:TL|TRY))?/g;
+const MONEY = /[-+]?\(?\d{1,3}(?:\.\d{3})*,\d{2,4}\)?(?:\s*(?:TL|TRY|B|A|\+|-))?|[-+]?\d+,\d{2,4}(?:\s*(?:TL|TRY))?/g;
 function linesToRegexRows(lines) {
   const rows = [["Tarih", "Açıklama", "Tutar", "Bakiye"]];
   let lastL = null;
@@ -218,6 +218,9 @@ export function guessMapping(headers, rows) {
   const amount = find(KW.amount, ["BAKIYE"]);
   if (debit >= 0 && credit >= 0) { m.mode = "split"; m.debit = debit; m.credit = credit; }
   else if (amount >= 0) { m.amount = amount; m.mode = m.dir >= 0 ? "dir" : "signed"; }
+  // döviz/altın ekstreleri: miktar (gr/adet) ve TL tutar sütunları ayrı olabilir
+  m.qtyCol = hs.findIndex(h => h && /\b(GR|GRAM|ADET|MIKTAR|ONS)\b|\(GR\)/.test(h) && !/BAKIYE/.test(h));
+  m.tlCol = hs.findIndex((h, i) => h && i !== m.qtyCol && /\b(TL|TRY)\b|TL KARSILIGI|TUTAR/.test(h) && !/BAKIYE|KUR|FIYAT/.test(h));
   if (m.desc < 0) { // en uzun metin sütunu
     let bestLen = 0; headers.forEach((_, c) => { if ([m.date, m.amount, m.debit, m.credit, m.balance, m.dir].includes(c)) return; const L = rows.slice(0, 20).reduce((t, r) => t + String(r[c] ?? "").length, 0); if (L > bestLen) { bestLen = L; m.desc = c; } });
   }
@@ -242,9 +245,11 @@ export function parseDate(v) {
   if (m && AY[m[2]]) return `${m[3]}-${p2(AY[m[2]])}-${p2(m[1])}`;
   return null;
 }
-export function parseAmount(v) {
+// qty=true: altın/döviz miktarı. Tek virgül her zaman ondalıktır (3,000 gr = 3 gr), 3 basamak korunur.
+export function parseAmount(v, qty) {
   if (v == null || v === "") return null;
-  if (typeof v === "number") return isFinite(v) ? Math.round(v * 100) / 100 : null;
+  const R = qty ? 1000 : 100;
+  if (typeof v === "number") return isFinite(v) ? Math.round(v * R) / R : null;
   let s = String(v).trim(); if (!s) return null;
   let neg = /^\(.*\)$/.test(s) || /^-|-\s*$|\s-$/.test(s.replace(/\s*(TL|TRY|₺)\s*$/i, ""));
   if (/\b(B|BORC|BORÇ)\s*$/i.test(s)) neg = true;
@@ -252,31 +257,37 @@ export function parseAmount(v) {
   if (!s) return null;
   const lc = s.lastIndexOf(","), ld = s.lastIndexOf(".");
   if (lc >= 0 && ld >= 0) s = lc > ld ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
-  else if (lc >= 0) s = /^\d{1,3}(,\d{3})+$/.test(s) && !/,\d{2}$/.test(s) ? s.replace(/,/g, "") : s.replace(/,/g, ".");
+  else if (lc >= 0) s = !qty && /^\d{1,3}(,\d{3})+$/.test(s) && !/,\d{2}$/.test(s) ? s.replace(/,/g, "") : s.replace(/,/g, ".");
   else if (ld >= 0 && /^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, "");
   const n = parseFloat(s); if (!isFinite(n)) return null;
-  return Math.round((neg ? -n : n) * 100) / 100;
+  return Math.round((neg ? -n : n) * R) / R;
+}
+// Açıklamadaki miktar: "ALTIN ALIS 3,00 GR", "2 ADET CEYREK"
+export function qtyFromDesc(d) {
+  const m = up(d).match(/(\d{1,3}(?:\.\d{3})*(?:,\d+)?|\d+(?:[.,]\d+)?)\s*(GR|GRAM|GRM|ADET|AD\.?)(?![A-Z])/);
+  if (!m) return null; const n = parseAmount(m[1], true); return n > 0 ? n : null;
 }
 
 /* ---------- satırları işlemlere çevir ---------- */
-export function extract(rows, headerIdx, m) {
+export function extract(rows, headerIdx, m, opt = {}) {
   const out = [], body = rows.slice(headerIdx + 1);
   for (let i = 0; i < body.length; i++) {
     const r = body[i] || [];
     const date = parseDate(r[m.date]); if (!date) continue;
     let amt = null;
     if (m.mode === "split") {
-      const d = parseAmount(r[m.debit]), c = parseAmount(r[m.credit]);
+      const d = parseAmount(r[m.debit], opt.qty), c = parseAmount(r[m.credit], opt.qty);
       if (c && Math.abs(c) > 0) amt = Math.abs(c); else if (d && Math.abs(d) > 0) amt = -Math.abs(d);
     } else {
-      amt = parseAmount(r[m.amount]);
+      amt = parseAmount(r[m.amount], opt.qty);
       if (amt != null && m.mode === "dir") { const dv = norm(r[m.dir]); if (/^(B|BORC|-|CIKIS|GIDER|HARCAMA)/.test(dv)) amt = -Math.abs(amt); else if (/^(A|ALACAK|\+|GIRIS|GELIR)/.test(dv)) amt = Math.abs(amt); }
     }
     if (!amt) continue;
     if (m.invert) amt = -amt;
     const desc = cleanDesc(String(r[m.desc] ?? ""));
-    const bal = m.balance >= 0 ? parseAmount(r[m.balance]) : null;
-    out.push({ row: i, date, amount: amt, desc, balance: bal });
+    const bal = m.balance >= 0 ? parseAmount(r[m.balance], opt.qty) : null;
+    const q = opt.qtyCol >= 0 ? parseAmount(r[opt.qtyCol], true) : null, tl = opt.tlCol >= 0 ? parseAmount(r[opt.tlCol]) : null;
+    out.push({ row: i, date, amount: amt, desc, balance: bal, rawDesc: String(r[m.desc] ?? ""), q: q != null ? Math.abs(q) : null, tl: tl != null ? Math.abs(tl) : null });
   }
   return out;
 }
