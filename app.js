@@ -43,7 +43,9 @@ const configured = firebaseConfig && firebaseConfig.apiKey && !/^BURAYA/.test(fi
 
 /* ---------- sample data (relative to today) ---------- */
 function buildSample() {
-  const A = [{ id: "a1", name: "Ziraat Vadesiz", kind: "banka", opening: 42500 }, { id: "a2", name: "Garanti BBVA Ticari", kind: "banka", opening: 18200 }, { id: "a3", name: "Nakit Kasa", kind: "nakit", opening: 3750 }];
+  const A = [{ id: "a1", name: "Bankomat", group: "Ziraat", kind: "banka", opening: 42500 }, { id: "a4", name: "Yatırım hesabı", group: "Ziraat", kind: "yatırım", opening: 75000 },
+    { id: "a2", name: "Ticari vadesiz", group: "Garanti BBVA", kind: "banka", opening: 18200 }, { id: "a5", name: "Bonus Kart", group: "Garanti BBVA", kind: "kredi kartı", opening: -6200 },
+    { id: "a3", name: "Nakit Kasa", group: "Nakit", kind: "nakit", opening: 3750 }];
   const C = [{ id: "c1", name: "Ayşe Yılmaz", kind: "müşteri", phone: "0532 000 00 01" }, { id: "c2", name: "Demir Lojistik", kind: "tedarikçi", phone: "" }, { id: "c3", name: "Kaya Gayrimenkul", kind: "tedarikçi", phone: "" }, { id: "c4", name: "Mert Kaplan", kind: "müşteri", phone: "" }, { id: "c5", name: "Elif Danışmanlık", kind: "müşteri", phone: "" }];
   const T = []; let k = 0; const now = pd(TODAY);
   const rnd = i => { const x = Math.sin(i * 9301 + 49297) * 233280; return x - Math.floor(x); };
@@ -95,6 +97,30 @@ function balanceOf(a) {
   return b;
 }
 const totalCash = () => sum(S.accounts, balanceOf);
+const accName = a => { const g = groupOf(a); return a.name.toLocaleUpperCase("tr").includes(g.toLocaleUpperCase("tr")) || g === "Nakit" || g === "Diğer hesaplar" ? a.name : `${g} ${a.name}`; };
+/* --- hesap grupları (banka bazında) --- */
+const KINDS = [["banka", "Vadesiz / bankomat"], ["vadeli", "Vadeli mevduat"], ["yatırım", "Yatırım hesabı"], ["kredi kartı", "Kredi kartı"], ["kredi", "Kredi / KMH"], ["birikim", "Birikim / altın / döviz"], ["nakit", "Nakit kasa"]];
+const kindLabel = k => (KINDS.find(x => x[0] === k) || [k, k || "Hesap"])[1];
+const KNOWN_BANKS = ["Ziraat", "Halkbank", "VakıfBank", "Vakıfbank", "Garanti BBVA", "Garanti", "İş Bankası", "Türkiye İş Bankası", "Yapı Kredi", "Akbank", "QNB", "Finansbank", "Denizbank", "DenizBank", "Enpara", "TEB", "ING", "HSBC", "Şekerbank", "Fibabanka", "Odeabank", "Kuveyt Türk", "Albaraka", "Türkiye Finans", "Ziraat Katılım", "Vakıf Katılım", "Emlak Katılım", "Papara", "Midas", "ininal", "Param", "Burgan", "Alternatif Bank", "Anadolubank", "ICBC", "Colendi", "Hayat Finans"];
+const CANON = { "Garanti": "Garanti BBVA", "Türkiye İş Bankası": "İş Bankası", "Vakıfbank": "VakıfBank", "DenizBank": "Denizbank", "Finansbank": "QNB" };
+function inferGroup(name) {
+  const n = " " + IMP.up(name || "").replace(/[^\p{L}\p{N}]+/gu, " ") + " ";
+  const hit = KNOWN_BANKS.filter(b => n.includes(" " + IMP.up(b) + " ")).sort((x, y) => y.length - x.length)[0];
+  return hit ? (CANON[hit] || hit) : "";
+}
+const groupOf = a => (a.group && a.group.trim()) || inferGroup(a.name) || (a.kind === "nakit" ? "Nakit" : "Diğer hesaplar");
+function accountGroups() {
+  const m = new Map();
+  for (const a of S.accounts) { const g = groupOf(a); if (!m.has(g)) m.set(g, []); m.get(g).push(a); }
+  const order = ["banka", "vadeli", "yatırım", "birikim", "kredi kartı", "kredi", "nakit"];
+  const out = [...m.entries()].map(([name, list]) => {
+    list.sort((x, y) => order.indexOf(x.kind) - order.indexOf(y.kind) || x.name.localeCompare(y.name, "tr"));
+    const bals = list.map(balanceOf);
+    return { name, list, total: sum(bals, x => x), assets: sum(bals, x => x > 0 ? x : 0), debts: sum(bals, x => x < 0 ? -x : 0) };
+  });
+  return out.sort((x, y) => (x.name === "Nakit" || x.name === "Diğer hesaplar") - (y.name === "Nakit" || y.name === "Diğer hesaplar") || y.assets + y.debts - (x.assets + x.debts));
+}
+const groupNames = () => [...new Set(S.accounts.map(groupOf).concat(KNOWN_BANKS.map(b => CANON[b] || b)))];
 const pending = () => S.plans.filter(p => p.status !== "tamam");
 const recv = () => sum(pending().filter(p => p.dir === "tahsilat"), p => p.amount);
 const pay = () => sum(pending().filter(p => p.dir === "ödeme"), p => p.amount);
@@ -427,7 +453,7 @@ function viewOzet() {
       <div class="legend"><span><i style="background:var(--pos)"></i>Gelir</span><span><i style="background:var(--neg)"></i>Gider</span></div></div>
       ${monthChart()}</div>
     <div class="panel"><div class="ph"><h2>Hesaplar</h2><button class="btn small" data-act="new-account">+ Hesap</button></div>
-      <div class="list">${S.accounts.map(a => `<div class="row click" data-edit-account="${esc(a.id)}"><div><div class="t">${esc(a.name)}</div><div class="m">${esc(a.kind)}</div></div><div class="amt ${balanceOf(a) < 0 ? "neg" : ""}">${money(balanceOf(a))}</div></div>`).join("") || `<p class="muted">Henüz hesap yok.</p>`}</div></div>
+      <div class="list">${accountGroups().map(g => `<div class="dhead" style="padding-top:8px"><span>${esc(g.name)}</span><span class="num ${g.total < 0 ? "neg" : ""}">${money(g.total)}</span></div>` + g.list.map(a => `<div class="row click" data-edit-account="${esc(a.id)}" style="padding-left:12px"><div><div class="t">${esc(a.name)}</div><div class="m">${esc(kindLabel(a.kind))}</div></div><div class="amt ${balanceOf(a) < 0 ? "neg" : ""}">${money(balanceOf(a))}</div></div>`).join("")).join("") || `<p class="muted">Henüz hesap yok.</p>`}</div></div>
   </section>`;
 }
 function planRow(p) {
@@ -474,12 +500,12 @@ function monthChart() {
 
 /* --- İşlemler --- */
 function txLabel(t) {
-  if (t.type === "transfer") { const a = acc(t.accountId), b = acc(t.toAccountId); return `${a ? a.name : "?"} → ${b ? b.name : "?"}`; }
+  if (t.type === "transfer") { const a = acc(t.accountId), b = acc(t.toAccountId); return `${a ? accName(a) : "?"} → ${b ? accName(b) : "?"}`; }
   const c = con(t.contactId); return c ? c.name : (t.note || t.category);
 }
 function viewIslemler() {
   const q = ui.q.toLocaleLowerCase("tr");
-  let rows = S.txns.filter(t => (!ui.ftype || t.type === ui.ftype) && (!ui.facc || t.accountId === ui.facc || t.toAccountId === ui.facc));
+  let rows = S.txns.filter(t => (!ui.ftype || t.type === ui.ftype) && (!ui.facc || (ui.facc.startsWith("g:") ? [t.accountId, t.toAccountId].some(id => id && acc(id) && groupOf(acc(id)) === ui.facc.slice(2)) : (t.accountId === ui.facc || t.toAccountId === ui.facc))));
   if (q) rows = rows.filter(t => [t.category, t.note, txLabel(t), String(t.amount)].join(" ").toLocaleLowerCase("tr").includes(q));
   rows.sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
   const inc = sum(rows.filter(t => t.type === "gelir"), t => t.amount), exp = sum(rows.filter(t => t.type === "gider"), t => t.amount);
@@ -492,14 +518,14 @@ function viewIslemler() {
     }
     const a = acc(t.accountId), sg = t.type === "gelir" ? 1 : t.type === "gider" ? -1 : 0;
     h += `<div class="row click" data-edit-txn="${esc(t.id)}"><div><div class="t">${esc(txLabel(t))}</div>
-      <div class="m">${dshort(t.date)} · ${esc(t.category || "")}${t.type !== "transfer" && a ? " · " + esc(a.name) : ""}${t.note && con(t.contactId) ? " · " + esc(t.note) : ""}</div></div>
+      <div class="m">${dshort(t.date)} · ${esc(t.category || "")}${t.type !== "transfer" && a ? " · " + esc(accName(a)) : ""}${t.note && con(t.contactId) ? " · " + esc(t.note) : ""}</div></div>
       <div class="amt ${sg > 0 ? "pos" : sg < 0 ? "neg" : "muted"}">${sg > 0 ? "+" : sg < 0 ? "−" : "⇄ "}${money(t.amount)}</div></div>`;
   }
   return `<section class="panel"><div class="ph"><div><h2>İşlemler</h2><p>${rows.length} kayıt · <span class="pos">${money(inc)}</span> gelir · <span class="neg">${money(exp)}</span> gider</p></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="import-stmt">⇣ Ekstre içe aktar</button><button class="btn primary" data-act="new-txn">+ İşlem</button></div></div>
     <div class="filters"><input id="fq" type="search" placeholder="Ara: kategori, cari, not, tutar" value="${esc(ui.q)}" aria-label="İşlemlerde ara">
     <select id="ftype" aria-label="Tür"><option value="">Tüm türler</option>${["gelir", "gider", "transfer"].map(x => `<option value="${x}" ${ui.ftype === x ? "selected" : ""}>${x[0].toLocaleUpperCase("tr") + x.slice(1)}</option>`).join("")}</select>
-    <select id="facc" aria-label="Hesap"><option value="">Tüm hesaplar</option>${S.accounts.map(a => `<option value="${esc(a.id)}" ${ui.facc === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></div>
+    <select id="facc" aria-label="Hesap"><option value="">Tüm hesaplar</option>${accountGroups().map(g => `<optgroup label="${esc(g.name)}"><option value="g:${esc(g.name)}" ${ui.facc === "g:" + g.name ? "selected" : ""}>${esc(g.name)} · tümü</option>${g.list.map(a => `<option value="${esc(a.id)}" ${ui.facc === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</optgroup>`).join("")}</select></div>
     <div class="list">${h || `<p class="muted" style="padding:14px 4px">Eşleşen işlem yok.</p>`}</div></section>`;
 }
 
@@ -528,18 +554,41 @@ function viewVadeler() {
 
 /* --- Hesaplar --- */
 function viewHesaplar() {
-  const total = totalCash();
-  return `<section class="panel"><div class="ph"><div><h2>Banka ve kasa hesapları</h2><p>Toplam <b class="num">${money(total)}</b></p></div>
+  const gs = accountGroups(), total = totalCash(), assets = sum(gs, g => g.assets), debts = sum(gs, g => g.debts);
+  let collapsed = {}; try { collapsed = JSON.parse(ls.get("kd-collapsed") || "{}"); } catch (e) { }
+  return `<section class="panel"><div class="ph"><div><h2>Hesaplar</h2><p>${gs.length} grup · ${S.accounts.length} hesap</p></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="import-stmt">⇣ Ekstre</button><button class="btn" data-act="new-transfer">⇄ Transfer</button><button class="btn primary" data-act="new-account">+ Hesap</button></div></div>
-    <div class="cards">${S.accounts.map(a => {
-    const b = balanceOf(a), tx = S.txns.filter(t => t.accountId === a.id || t.toAccountId === a.id), last = tx.reduce((m, t) => t.date > m ? t.date : m, "");
-    const sh = total > 0 && b > 0 ? Math.round(b / total * 100) : 0;
-    return `<button class="acard" data-edit-account="${esc(a.id)}" type="button"><div style="display:flex;justify-content:space-between;gap:8px"><b>${esc(a.name)}</b><span class="pill acc">${esc(a.kind)}</span></div>
-      <div class="bal ${b < 0 ? "neg" : ""}">${money(b)}</div>
-      <div class="muted" style="font-size:.82rem">Açılış ${money(a.opening)} · ${tx.length} işlem${last ? ` · son ${dshort(last)}` : ""}</div>
-      <div style="height:6px;background:var(--surface-2);border-radius:3px;overflow:hidden"><div style="width:${sh}%;height:100%;background:var(--accent)"></div></div>
-      <div class="muted" style="font-size:.78rem">Toplam nakdin %${sh}'i</div></button>`;
-  }).join("") || `<p class="muted">Henüz hesap yok.</p>`}</div></section>`;
+    <div class="grid g-kpi" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+      <div class="kpi" style="padding:4px 0"><div class="lbl">Varlıklar</div><div class="val pos">${money(assets)}</div></div>
+      <div class="kpi" style="padding:4px 0"><div class="lbl">Borçlar (kart, kredi)</div><div class="val neg">${money(debts)}</div></div>
+      <div class="kpi" style="padding:4px 0"><div class="lbl">Net</div><div class="val ${total < 0 ? "neg" : ""}">${money(total)}</div></div>
+    </div></section>
+  ${gs.map(g => {
+    const open = !collapsed[g.name], share = assets > 0 ? Math.round(g.assets / assets * 100) : 0;
+    return `<section class="panel"><div class="ph" style="margin-bottom:${open ? 12 : 0}px">
+      <button type="button" class="btn ghost" data-toggle-group="${esc(g.name)}" style="padding:0;gap:10px;min-width:0" aria-expanded="${open}">
+        <span class="mark" style="width:30px;height:30px;font-size:13px;flex:none">${esc(g.name.slice(0, 1).toLocaleUpperCase("tr"))}</span>
+        <span style="text-align:left;min-width:0"><b style="font-size:1.02rem">${esc(g.name)}</b><br><span class="muted" style="font-size:.8rem;font-weight:400">${g.list.length} hesap${g.assets ? ` · varlıkların %${share}'i` : ""}</span></span>
+        <span class="muted" aria-hidden="true">${open ? "▾" : "▸"}</span></button>
+      <div style="text-align:right"><div class="num ${g.total < 0 ? "neg" : ""}" style="font-size:1.1rem;font-weight:500">${money(g.total)}</div>
+        <div class="muted" style="font-size:.78rem">${g.debts ? `<span class="pos">+${money0(g.assets)}</span> · <span class="neg">−${money0(g.debts)}</span>` : "net"}</div></div></div>
+      ${open ? `<div class="cards">${g.list.map(accCard).join("")}
+        <button class="acard" type="button" data-new-in-group="${esc(g.name)}" style="place-content:center;text-align:center;border-style:dashed;color:var(--muted);min-height:90px">+ ${esc(g.name)} için hesap ekle</button></div>
+        <div style="display:flex;justify-content:flex-end;margin-top:8px"><button class="btn small ghost" data-rename-group="${esc(g.name)}">Grup adını değiştir</button></div>` : ""}
+    </section>`;
+  }).join("") || `<section class="panel"><p class="muted">Henüz hesap yok.</p></section>`}`;
+}
+function accCard(a) {
+  const b = balanceOf(a), tx = S.txns.filter(t => t.accountId === a.id || t.toAccountId === a.id), last = tx.reduce((m, t) => t.date > m ? t.date : m, "");
+  return `<button class="acard" data-edit-account="${esc(a.id)}" type="button"><div style="display:flex;justify-content:space-between;gap:8px;align-items:start"><b>${esc(a.name)}</b><span class="pill ${a.kind === "kredi kartı" || a.kind === "kredi" ? "neg" : a.kind === "yatırım" || a.kind === "vadeli" || a.kind === "birikim" ? "pos" : "acc"}">${esc(kindLabel(a.kind))}</span></div>
+    <div class="bal ${b < 0 ? "neg" : ""}">${money(b)}</div>
+    <div class="muted" style="font-size:.82rem">${tx.length} işlem${last ? ` · son ${dshort(last)}` : ""}</div></button>`;
+}
+function renameGroup(name) {
+  openSheet("Grup adını değiştir", `<form class="form" id="frm" data-kind="rename-group" data-id="${esc(name)}">
+    <label>Yeni ad<input id="f-gname" required value="${esc(name)}"></label>
+    <p class="muted" style="margin:0;font-size:.85rem">Bu gruptaki ${accountGroups().find(g => g.name === name)?.list.length || 0} hesabın grubu değişecek.</p>
+    ${formFoot(false)}</form>`);
 }
 
 /* --- Cariler --- */
@@ -628,7 +677,7 @@ function openSheet(title, body) {
 }
 const closeSheet = () => { $("#sheetRoot").innerHTML = ""; };
 const opt = (arr, sel, blank) => (blank != null ? `<option value="">${blank}</option>` : "") + arr.map(([v, l]) => `<option value="${esc(v)}" ${v === sel ? "selected" : ""}>${esc(l)}</option>`).join("");
-const accOpts = sel => opt(S.accounts.map(a => [a.id, a.name]), sel);
+const accOpts = sel => accountGroups().map(g => `<optgroup label="${esc(g.name)}">${g.list.map(a => `<option value="${esc(a.id)}" ${a.id === sel ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</optgroup>`).join("");
 const conOpts = sel => opt(S.contacts.map(c => [c.id, c.name]), sel, "— Cari yok —");
 const catList = (id, type) => `<datalist id="${id}">${(CATS[type] || [...CATS.gelir, ...CATS.gider]).map(c => `<option value="${esc(c)}">`).join("")}</datalist>`;
 const amtStr = n => n ? String(n).replace(".", ",") : "";
@@ -665,10 +714,11 @@ function planForm(p) {
 }
 function accountForm(a) {
   openSheet(a ? "Hesabı düzenle" : "Yeni hesap", `<form class="form" id="frm" data-kind="account" data-id="${esc(a?.id || "")}">
-    <label>Hesap adı<input id="f-name" required value="${esc(a?.name || "")}" placeholder="Örn. İş Bankası Vadesiz"></label>
-    <div class="f2"><label>Tür<select id="f-kind">${opt([["banka", "Banka"], ["nakit", "Nakit kasa"], ["kredi kartı", "Kredi kartı"], ["birikim", "Birikim / yatırım"]], a?.kind || "banka")}</select></label>
+    <div class="f2"><label>Banka / Grup<input id="f-group" list="dl-groups" value="${esc(a ? (a.group || inferGroup(a.name)) : (ui.newGroup || ""))}" placeholder="Örn. Ziraat"><datalist id="dl-groups">${groupNames().map(g => `<option value="${esc(g)}">`).join("")}</datalist></label>
+    <label>Hesap adı<input id="f-name" required value="${esc(a?.name || "")}" placeholder="Örn. Bankomat, Yatırım, Bonus kart"></label></div>
+    <div class="f2"><label>Tür<select id="f-kind">${opt(KINDS, a?.kind || ui.newKind || "banka")}</select></label>
     <label>Açılış bakiyesi (₺)<input id="f-open" inputmode="decimal" value="${amtStr(a?.opening) || "0"}"></label></div>
-    <p class="muted" style="margin:0;font-size:.82rem">Kredi kartı borcunu eksi bakiye olarak gir (örn. -4500).</p>
+    <p class="muted" style="margin:0;font-size:.82rem">Aynı bankadaki hesaplar (bankomat, yatırım, kredi kartı) aynı grupta toplanır. Kredi kartı ve kredi borcunu eksi bakiye olarak gir (örn. -4500).</p>
     ${a ? `<p class="muted" style="margin:0;font-size:.85rem">Güncel bakiye: <b class="num">${money(balanceOf(a))}</b></p>` : ""}
     ${formFoot(a)}</form>`);
 }
@@ -884,6 +934,12 @@ async function commitImport() {
 function submitForm(f) {
   const kind = f.dataset.kind, id = f.dataset.id; const v = s => (f.querySelector(s)?.value || "").trim();
   if (["txn", "plan", "complete"].includes(kind)) { const n = parseAmt(v("#f-amount")); if (!(n > 0)) { toast("Geçerli bir tutar gir (örn. 1.250,50)."); return; } }
+  if (kind === "rename-group") {
+    const nn = v("#f-gname"); if (!nn) return;
+    const list = accountGroups().find(g => g.name === id)?.list || [];
+    list.forEach(x => put("accounts", { ...x, group: nn }));
+    toast(`${list.length} hesap "${nn}" grubuna taşındı`); closeSheet(); return;
+  }
   if (kind === "txn") {
     const type = v("#f-type"); const o = { id: id || uid8(), type, amount: parseAmt(v("#f-amount")), date: v("#f-date"), accountId: v("#f-acc"), note: v("#f-note") };
     if (type === "transfer") { o.toAccountId = v("#f-to"); o.category = "Transfer"; o.contactId = ""; if (o.toAccountId === o.accountId) { toast("Çıkış ve giriş hesabı farklı olmalı."); return; } }
@@ -895,7 +951,8 @@ function submitForm(f) {
     const o = { ...(old || {}), id: id || uid8(), dir: v("#f-dir"), amount: parseAmt(v("#f-amount")), due: v("#f-due"), contactId: v("#f-con"), category: v("#f-cat") || "Diğer", repeat: v("#f-rep"), note: v("#f-note"), status: old?.status || "bekliyor" };
     put("plans", o); toast(id ? "Vade güncellendi" : "Vade eklendi"); closeSheet();
   } else if (kind === "account") {
-    const o = { id: id || uid8(), name: v("#f-name"), kind: v("#f-kind"), opening: parseAmt(v("#f-open")) || 0 };
+    const o = { id: id || uid8(), name: v("#f-name"), group: v("#f-group") || inferGroup(v("#f-name")), kind: v("#f-kind"), opening: parseAmt(v("#f-open")) || 0 };
+    ui.newGroup = ""; ui.newKind = "";
     if (!o.name) { toast("Hesap adı gir."); return; }
     put("accounts", o); toast(id ? "Hesap güncellendi" : "Hesap eklendi"); closeSheet();
   } else if (kind === "contact") {
@@ -948,6 +1005,9 @@ document.addEventListener("click", async e => {
   if (d.editAccount) { const a = acc(d.editAccount); if (a) accountForm(a); return; }
   if (d.editContact) { const c = con(d.editContact); if (c) contactForm(c); return; }
   if (d.showContact) { const c = con(d.showContact); if (c) contactDetail(c); return; }
+  if (d.toggleGroup) { let c = {}; try { c = JSON.parse(ls.get("kd-collapsed") || "{}"); } catch (e) { } c[d.toggleGroup] = !c[d.toggleGroup]; ls.set("kd-collapsed", JSON.stringify(c)); return render(); }
+  if (d.newInGroup) { ui.newGroup = d.newInGroup; return accountForm(); }
+  if (d.renameGroup) return renameGroup(d.renameGroup);
   if (d.planFor) { planForm({ contactId: d.planFor, dir: "tahsilat" }); return; }
   if (el.id === "addBtn") return newMenu();
   const a = d.act; if (!a) return;
