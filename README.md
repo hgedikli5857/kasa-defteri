@@ -115,6 +115,7 @@ Banka hareketlerini tek tek yazmak yerine:
 3. Uygulama tarih, açıklama ve tutar sütunlarını kendisi bulur; bulamazsa "Sütun eşleştirme"den bir kez seç (o banka için hatırlanır).
 4. Listede kategorileri kontrol et → **N işlemi ekle**.
 
+- **Ekran görüntüsü / fotoğraf:** Bankanın mobil uygulamasındaki hareket listesinin ekran görüntüsünü ya da kâğıt ekstrenin fotoğrafını seçebilirsin (birden fazla görsel bir arada). Metin telefonda okunur (OCR); ilk seferde okuyucu indirildiği için 10-20 sn sürer. Tutarları önizlemede kontrol et.
 - **Kredi kartı:** Kart ekstresini *kredi kartı* türündeki hesaba yükle; harcamalar otomatik gider olarak çevrilir, karta yapılan ödemeler gelir sayılmaz (bankadan karta transfer olarak gir).
 - Daha önce eklenen hareketler **"zaten eklendi"** olarak işaretlenir, tekrar eklenmez.
 - Dosyada bakiye sütunu varsa, uygulamadaki bakiye bankayla karşılaştırılır; istersen açılış bakiyesi düzeltilerek eşitlenir.

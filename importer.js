@@ -146,6 +146,100 @@ function linesToRegexRows(lines) {
   }
   return rows.length > 1 ? rows : null;
 }
+/* ---------- görsel (ekran görüntüsü / fotoğraf) → OCR ---------- */
+const TESS = "https://cdn.jsdelivr.net/npm/tesseract.js@7/dist/tesseract.min.js";
+const TESS_LANG = "https://cdn.jsdelivr.net/npm/@tesseract.js-data/tur@1.0.0/4.0.0_best_int";
+let tessPromise = null, tessWorker = null;
+function loadTess() {
+  if (!tessPromise) tessPromise = new Promise((res, rej) => {
+    const s = document.createElement("script"); s.src = TESS;
+    s.onload = () => res(window.Tesseract); s.onerror = () => { tessPromise = null; rej(new Error("Görsel okuyucu yüklenemedi. İnternet bağlantını kontrol et.")); };
+    document.head.appendChild(s);
+  });
+  return tessPromise;
+}
+export const isImage = (file, head) => /^image\//.test(file.type || "") || /\.(png|jpe?g|webp|bmp|gif)$/i.test(file.name || "") ||
+  (head && ((head[0] === 0x89 && head[1] === 0x50) || (head[0] === 0xff && head[1] === 0xd8)));
+// Küçük ekran görüntülerini büyüt (OCR doğruluğu artar)
+async function prepImage(file) {
+  try {
+    const bmp = await createImageBitmap(file), k = bmp.width < 1400 ? Math.min(3, 1400 / bmp.width) : 1;
+    if (k <= 1.05) return file;
+    const c = document.createElement("canvas"); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    const g = c.getContext("2d"); g.imageSmoothingQuality = "high"; g.drawImage(bmp, 0, 0, c.width, c.height);
+    return c;
+  } catch (e) { return file; }
+}
+export async function imageLines(file, onProgress, page = 1) {
+  const T = await loadTess();
+  if (!tessWorker) tessWorker = await T.createWorker("tur", 1, { langPath: TESS_LANG, logger: m => { if (onProgress && m.status === "recognizing text") onProgress(m.progress); } });
+  const { data } = await tessWorker.recognize(await prepImage(file), {}, { blocks: true, text: true });
+  const lines = [];
+  for (const b of data.blocks || []) for (const pa of b.paragraphs || []) for (const ln of pa.lines || []) {
+    const ws = (ln.words || []).filter(w => w.text && w.text.trim() && w.confidence > 20).sort((a, b) => a.bbox.x0 - b.bbox.x0);
+    if (!ws.length) continue;
+    const h = Math.max(...ws.map(w => w.bbox.y1 - w.bbox.y0)) || 10, cells = [];
+    for (const w of ws) { const c = cells[cells.length - 1]; if (c && w.bbox.x0 - c.x1 < h * 1.2) { c.s += " " + w.text; c.x1 = w.bbox.x1; } else cells.push({ s: w.text, x0: w.bbox.x0, x1: w.bbox.x1 }); }
+    lines.push({ page, y: -ln.bbox.y0, h, cells });
+  }
+  lines.sort((a, b) => b.y - a.y);
+  return { lines, text: data.text || "" };
+}
+// Gevşek tarih: "10 Haziran 2026", "10 Haz", "10.06.2026 14:32", "Bugün", "Dün"
+const AYK = { OCA: 1, SUB: 2, MAR: 3, NIS: 4, MAY: 5, HAZ: 6, TEM: 7, AGU: 8, EYL: 9, EKI: 10, KAS: 11, ARA: 12 };
+export function findDate(t, today = new Date()) {
+  const T = norm(t), iso = d => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+  let m = T.match(/\b(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})\b/);
+  if (m) { let y = +m[3]; if (y < 100) y += 2000; if (+m[2] >= 1 && +m[2] <= 12 && +m[1] >= 1 && +m[1] <= 31) return `${y}-${p2(m[2])}-${p2(m[1])}`; }
+  m = T.match(/\b(\d{1,2})\s+(OCA|SUB|MAR|NIS|MAY|HAZ|TEM|AGU|EYL|EKI|KAS|ARA)[A-Z]*\.?(?:\s+(\d{4}))?/);
+  if (m && +m[1] >= 1 && +m[1] <= 31) {
+    let y = m[3] ? +m[3] : today.getFullYear(); const mo = AYK[m[2]];
+    if (!m[3] && new Date(y, mo - 1, +m[1]) > today) y--;
+    return `${y}-${p2(mo)}-${p2(m[1])}`;
+  }
+  if (/\bBUGUN\b/.test(T)) return iso(today);
+  if (/\bDUN\b/.test(T)) { const d = new Date(today); d.setDate(d.getDate() - 1); return iso(d); }
+  return null;
+}
+const AMT_RX = /[-+−]?\s?(?:₺\s?)?\d{1,3}(?:[.\s]\d{3})*,\d{2}(?:\s?(?:TL|TRY|₺))?/g;
+// Mobil uygulama listeleri: her harekette açıklama + tutar aynı satırda, tarih aynı / alt / üst satırda ya da gün başlığında
+function linesToAppRows(lines) {
+  const rows = [["Tarih", "Açıklama", "Tutar"]], txt = lines.map(l => l.cells.map(c => c.s).join(" ").replace(/\s+/g, " ").trim());
+  const hasAmt = t => (t.match(AMT_RX) || []).length > 0;
+  let cur = null;
+  txt.forEach((t, i) => {
+    const am = [...t.matchAll(AMT_RX)].filter(x => t[x.index - 1] !== "/" && !/^[-+−]?\s?0,00/.test(x[0].trim())).map(x => x[0]);
+    if (!am.length) { const d = findDate(t); if (d && t.replace(/[\d.:/\-\s]/g, "").length < 25) cur = d; return; }
+    const raw = am[am.length - 1], amount = raw.replace(/−/g, "-").replace(/\s(?=\d{3})/g, ".").replace(/[₺\s]|TL|TRY/g, "");
+    let desc = t.replace(raw, "").replace(/\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b|\b\d{1,2}:\d{2}\b/g, " ")
+      .replace(/\b\d{1,2}\s+(Ocak|Şubat|Mart|Nisan|Mayıs|Haziran|Temmuz|Ağustos|Eylül|Ekim|Kasım|Aralık|Oca|Şub|Mar|Nis|May|Haz|Tem|Ağu|Eyl|Eki|Kas|Ara)[a-zçğıöşü]*\.?(\s+\d{4})?\b/gi, " ")
+      .replace(/^[\s—–\-|:]+|[\s—–\-|:]+$/g, "").replace(/\s+/g, " ").trim();
+    const prev = txt[i - 1] || "", next = txt[i + 1] || "";
+    let date = findDate(t) || (!hasAmt(next) && findDate(next)) || (!hasAmt(prev) && findDate(prev) && prev.replace(/[\d.:/\-\s]/g, "").length < 25 ? findDate(prev) : null) || cur;
+    desc = desc.replace(/(\s+[^A-Za-zÇĞİÖŞÜçğıöşü\s]{1,3})+$/, "").trim();
+    if (findDate(desc) && desc.replace(/[\d.:/\-\s]/g, "").length < 12) desc = "";
+    if (desc.replace(/[^A-Za-zÇĞİÖŞÜçğıöşü]/g, "").length < 3 && prev && !hasAmt(prev) && !findDate(prev)) desc = prev;
+    if (!date || /BAKIYE|LIMIT|TOPLAM|BORC|PUAN|ASGARI|ORANI|KESIM|SON ODEME TARIHI/.test(norm(desc))) return;
+    rows.push([date, desc, amount]);
+  });
+  return rows.length > 1 ? rows : null;
+}
+export async function imagesToRows(files, onProgress) {
+  let all = [], meta = null;
+  for (let i = 0; i < files.length; i++) {
+    const { lines, text } = await imageLines(files[i], p => onProgress && onProgress((i + p) / files.length), i + 1);
+    meta = meta || statementMeta(text);
+    let rows = null; const table = lines.length ? linesToTable(lines) : null;
+    if (table) { const h = detectHeader(table), m = guessMapping(table[h], table.slice(h + 1)); const ex = extract(table, h, m); if (ex.length) rows = [["Tarih", "Açıklama", "Tutar"], ...ex.map(x => [x.date, x.desc, String(x.amount).replace(".", ",")])]; }
+    if (!rows) rows = linesToAppRows(lines);
+    if (!rows) { const rx = linesToRegexRows(lines); if (rx) rows = rx.map(r => r.slice(0, 3)); }
+    if (rows) all = all.length ? all.concat(rows.slice(1)) : rows;
+  }
+  if (!all.length) throw new Error("Görselde hesap hareketi okunamadı. Ekran görüntüsü net ve tarih + tutar görünür olmalı.");
+  if (meta) all.meta = meta;
+  return all;
+}
+
 // Kart ekstresi özet bilgileri: kart limiti, hesap kesim günü, dönem borcu
 export function statementMeta(text) {
   const T = norm(text), num = re => { const m = T.match(re); return m ? parseAmount(m[1]) : null; };
@@ -167,10 +261,11 @@ async function pdfToRows(buf, password) {
   throw new Error("PDF'te hesap hareketi tablosu bulunamadı. Bu bankanın PDF biçimini Claude'a gönder, okuyucuyu uyarlasın.");
 }
 
-export async function fileToRows(file, password) {
+export async function fileToRows(file, password, onProgress) {
   const name = (file.name || "").toLowerCase();
   const buf = await file.arrayBuffer();
   const head = new Uint8Array(buf.slice(0, 8));
+  if (isImage(file, head)) return imagesToRows([file], onProgress);
   if ((head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46) || name.endsWith(".pdf")) return pdfToRows(buf, password);
   const isZip = head[0] === 0x50 && head[1] === 0x4b; // xlsx
   const isOle = head[0] === 0xd0 && head[1] === 0xcf; // eski xls
@@ -324,7 +419,7 @@ const RULES = [
   ["Eğitim", ["OKUL", "KOLEJ", "UNIVERSITE", "DERSHANE", "KURS", "UDEMY", "COURSERA", "D&R", "D R ", "KITAP", "KITABEVI", "IDEFIX"]],
   ["Pazarlama", ["FACEBK", "FACEBOOK", "META ", "GOOGLE ADS", "INSTAGRAM", "TIKTOK ADS", "LINKEDIN"]],
   ["Yazılım", ["GOOGLE", "APPLE.COM", "ITUNES", "MICROSOFT", "ADOBE", "CANVA", "ANTHROPIC", "CLAUDE", "OPENAI", "CHATGPT", "GITHUB", "ZOOM", "NOTION", "DROPBOX"]],
-  ["Online alışveriş", ["TRENDYOL", "HEPSIBURADA", "AMAZON", "N11", "CICEKSEPETI", "TEMU", "ALIEXPRESS", "SHEIN", "PTTAVM", "MORHIPO", "IYZICO", "PAYTR"]],
+  ["Online alışveriş", ["TRENDYOL", "HEPSIBURADA", "HEPSIBURAD", "HEPSIPAY", "AMAZON", "N11", "CICEKSEPETI", "TEMU", "ALIEXPRESS", "SHEIN", "PTTAVM", "MORHIPO", "IYZICO", "PAYTR"]],
   ["Ofis", ["KIRTASIYE", "OFIS", "OFFICE"]],
   ["Market / Gıda", ["MARKET", "MARKT", "SUPERMARKET", "HIPERMARKET"]],
   ["Banka masrafı", ["UCRET"]]
@@ -363,4 +458,4 @@ const SUBRULES = [
 ];
 export function guessSub(desc) { const d = " " + norm(desc) + " "; for (const [s, keys] of SUBRULES) if (keys.some(x => d.includes(x))) return s; return ""; }
 export function headerSignature(headers) { return headers.map(norm).filter(Boolean).join("|").slice(0, 300); }
-export const _dbg = { pdfLines: (...a) => pdfLines(...a), linesToTable: (...a) => linesToTable(...a), linesToRegexRows: (...a) => linesToRegexRows(...a) };
+export const _dbg = { linesToAppRows: (...a) => linesToAppRows(...a), pdfLines: (...a) => pdfLines(...a), linesToTable: (...a) => linesToTable(...a), linesToRegexRows: (...a) => linesToRegexRows(...a) };

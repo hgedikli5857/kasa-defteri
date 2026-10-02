@@ -418,7 +418,7 @@ const Gmail = {
       const r = await this.api("messages?maxResults=25&q=" + encodeURIComponent(q));
       const msgs = await Promise.all((r.messages || []).map(m => this.api("messages/" + m.id + "?format=full")));
       this.list = msgs.map(m => { const h = n => ((m.payload.headers || []).find(x => x.name.toLowerCase() === n) || {}).value || "";
-        return { id: m.id, from: h("from"), subject: h("subject"), date: new Date(+m.internalDate), files: this.parts(m.payload).filter(f => /\.(pdf|xlsx?|csv|ods|html?)$/i.test(f.name)), hasHtml: /<table/i.test(this.html(m.payload)), payload: m.payload };
+        return { id: m.id, from: h("from"), subject: h("subject"), date: new Date(+m.internalDate), files: this.parts(m.payload).filter(f => /\.(pdf|xlsx?|csv|ods|html?|png|jpe?g|webp)$/i.test(f.name)), hasHtml: /<table/i.test(this.html(m.payload)), payload: m.payload };
       });
     } catch (e) { this.err = this.errText(e); }
     this.busy = false; gmailPanel();
@@ -1328,11 +1328,11 @@ function openImport(accountId) {
   const accId = accountId || (acc(ls.get("kd-imp-acc")) ? ls.get("kd-imp-acc") : S.accounts[0].id);
   imp = { accountId: accId };
   openSheet("Banka ekstresi içe aktar", `<div class="form">
-    <p style="margin:0">İnternet veya mobil bankacılıktan <b>hesap hareketlerini PDF, Excel ya da CSV</b> olarak indir, sonra burada seç. Kayıtlar eklenmeden önce sana gösterilir.</p>
+    <p style="margin:0">İnternet veya mobil bankacılıktan <b>hesap hareketlerini PDF, Excel ya da CSV</b> olarak indir, sonra burada seç. <b>Ekran görüntüsü / fotoğraf</b> da olur (birden fazla seçebilirsin). Kayıtlar eklenmeden önce sana gösterilir.</p>
     <label>Hangi hesabın ekstresi?<select id="imp-acc">${accOpts(accId)}</select></label>
     <button class="btn primary" type="button" data-act="imp-pick" style="justify-content:center;padding:12px">Dosya seç</button>
     <button class="btn" type="button" data-act="gmail" style="justify-content:center;padding:12px">✉ Gmail'deki ekstrelerden seç</button>
-    <input type="file" id="stmtFile" accept=".pdf,.xlsx,.xls,.csv,.txt,.ods,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" hidden>
+    <input type="file" id="stmtFile" multiple accept="image/*,.pdf,.xlsx,.xls,.csv,.txt,.ods,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" hidden>
     ${S.txns.some(t => t.importKey) ? `<button class="btn ghost small" type="button" data-act="imports" style="justify-self:start;padding-left:0">Yüklediğin ekstreler · yanlış yüklemeyi geri al</button>` : ""}
     <details class="small-note"><summary>Ekstreyi nereden indiririm?</summary>
       <p>Çoğu bankada: <b>Hesaplarım → hesabı seç → Hesap hareketleri → tarih aralığı → İndir / Excel</b>. Mobil uygulamada bulamazsan internet şubesinden indir. PDF de olur; taranmış (fotoğraf) PDF'ler okunamaz. Şifreli PDF'te şifre sorulur.</p></details>
@@ -1340,9 +1340,13 @@ function openImport(accountId) {
 }
 async function readStatement(file, password) {
   try {
-    toast("Dosya okunuyor…");
+    const files = Array.isArray(file) ? file : [file]; file = files[0];
+    const img = files.every(f => IMP.isImage(f));
+    toast(img ? "Görsel okunuyor… (ilk seferde okuyucu indirilir, 10-20 sn sürebilir)" : "Dosya okunuyor…");
     imp.file = file;
-    const rows = await IMP.fileToRows(file, password);
+    let lastP = -1; const prog = p => { const k = Math.round(p * 100); if (k - lastP >= 5) { lastP = k; toast(`Görsel okunuyor… %${k}`); } };
+    const rows = img && files.length > 1 ? await IMP.imagesToRows(files, prog) : await IMP.fileToRows(file, password, prog);
+    if (img) file = { name: files.length > 1 ? `${files.length} ekran görüntüsü` : file.name };
     if (!rows || !rows.length) { toast("Dosyada okunabilir satır yok."); return; }
     let hIdx = IMP.detectHeader(rows);
     if (hIdx < 0) hIdx = 0;
@@ -1423,8 +1427,8 @@ function buildImpItems() {
       || t.type === "transfer" && (type === "gider" && t.accountId === imp.accountId && Math.abs(t.amount - amt) < 0.01 || type === "gelir" && t.toAccountId === imp.accountId && Math.abs((t.toAmount ?? t.amount) - amt) < 0.01)));
     const D = IMP.up(x.desc), ct = contacts.find(c => D.includes(c.n));
     const isCard = acc(imp.accountId)?.kind === "kredi kartı";
-    if (isCard && x.amount > 0 && /ODEME|ÖDEME|TESEKKUR|TEŞEKKÜR|PAYMENT|HESAPTAN/i.test(IMP.up(x.desc))) {
-      return { ...x, key, type, amt, dup: "kart", sel: false, cat: "Diğer gelir", contactId: "" };
+    if (isCard && ((x.amount > 0 && /ODEME|ÖDEME|TESEKKUR|TEŞEKKÜR|PAYMENT|HESAPTAN/i.test(IMP.up(x.desc))) || /TESEKKUR|TEŞEKKÜR|ÖDEMENİZ|ODEMENIZ/.test(IMP.up(x.desc)))) {
+      return { ...x, amount: Math.abs(x.amount), key, type: "gelir", amt, dup: "kart", sel: false, cat: "Diğer gelir", contactId: "" };
     }
     if (U.code !== "TRY" && TRADE_RX.test(D)) return { ...x, key, type, amt, dup: exact ? "var" : maybe ? "olası" : "", sel: !exact && !maybe, cat: type === "gelir" ? "Diğer gelir" : "Diğer gider", contactId: "", trade: true, tl: x.tl || Math.round(amt * (x.price || rateOf(U.code) || 0) * 100) / 100 };
     let cat = IMP.guessCategory(x.desc, x.amount, learned);
@@ -1770,7 +1774,7 @@ document.addEventListener("change", async e => {
     if (k === "nakit" && !$("#f-name").value) $("#f-name").placeholder = "Örn. Cüzdan, Kasa, Evdeki dolar";
   }
   else if (e.target.id === "f-asset") { const code = e.target.value; $("#f-open-lbl").textContent = `Açılış bakiyesi (${amtUnit({ asset: code })})`; updateOpenConv(); }
-  else if (e.target.id === "stmtFile") { const f = e.target.files && e.target.files[0]; if (f) readStatement(f); }
+  else if (e.target.id === "stmtFile") { const fs = [...(e.target.files || [])]; if (fs.length) readStatement(fs.length > 1 ? fs.filter(f => IMP.isImage(f)).length === fs.length ? fs : fs[0] : fs[0]); }
   else if (e.target.id === "imp-acc" && imp) { imp.accountId = e.target.value; }
   else if (e.target.closest && e.target.closest("#impPanel")) {
     const t = e.target, i = t.dataset.i != null ? +t.dataset.i : -1;
