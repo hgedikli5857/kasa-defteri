@@ -124,6 +124,16 @@ Banka hareketlerini tek tek yazmak yerine:
 Kart hesabını düzenle (veya ekstre içe aktarırken) şu dört alanı bankanın uygulamasından bakarak doldur: **Toplam limit**, **Kullanılabilir limit**, **Dönem içi harcamalar**, **Hesap kesim günü**.
 Özet ve Hesaplar ekranında banka uygulamasındaki gibi görünür: kullanılabilir limit, dönem içi harcamalar, toplam borç, önceki dönem/taksit farkı ve dönem tarihleri. Sonra eklediğin harcamalar iki rakama da otomatik yansır; kesim gününde dönem harcaması sıfırlanır.
 
+## Gmail'den ekstre (isteğe bağlı)
+Bankanın e-postayla gönderdiği ekstreleri indirmeden içe aktarmak için. Uygulama Gmail'i **sadece okur** (`gmail.readonly`).
+
+**Bir kerelik kurulum (3 dk):**
+1. **console.cloud.google.com** → proje `kasa-defteri-c2842` → **API'ler ve Hizmetler → Kitaplık** → "**Gmail API**" → **Etkinleştir**.
+2. **Google Auth Platform → Kitle (Audience)** → **Test kullanıcıları** → kendi Gmail adresini ekle. (Uygulama "Yayında" ise ve Google Gmail iznini engellerse, durumu **Teste geri al** de.)
+3. Uygulamada **İşlemler → Ekstre içe aktar → ✉ Gmail'deki ekstrelerden seç → Gmail'e bağlan**. "Google bu uygulamayı doğrulamadı" uyarısında **Gelişmiş → Kasa Defteri'ne git → İzin ver**.
+
+**Kullanım:** Listeden ekstre ekine (PDF/Excel) dokun → hesabı seç → kontrol et → ekle. Aynı bankanın sonraki ekstreleri aynı hesaba önerilir; yüklenenler "✓ yüklendi" olarak işaretlenir. Gmail izni de 1 saat geçerlidir; süresi dolunca yeniden bağlan.
+
 ## Döviz, altın ve gümüş hesapları
 Hesap eklerken **Para / varlık cinsi** seç: TL, USD, EUR, GBP, CHF, SAR; gram altın (24 ayar), 22 ayar bilezik, 18/14 ayar (gr); çeyrek, yarım, tam, cumhuriyet, ata, reşat, gremse (adet); gümüş (gr).
 - Bakiye kendi biriminde tutulur, TL karşılığı canlı kurla (Truncgil Finans, alış fiyatı) hesaplanır. Başlıktaki **Kurlar** düğmesinden kuyumcu fiyatını elle girebilirsin.

@@ -5,6 +5,7 @@ import * as IMP from "./importer.js";
 
 const FB = "https://www.gstatic.com/firebasejs/10.14.1/";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
 const DRIVE_FOLDER = "Kasa Defteri Yedek";
 const DRIVE_FILE = "kasa-defteri-veri.json";
 
@@ -340,6 +341,7 @@ async function signIn() {
 }
 async function signOutNow() {
   Drive.forget();
+  ls.del("kd-gmail-token"); Gmail.token = null; Gmail.list = null;
   await fb.au.signOut(auth);
   closeSheet();
 }
@@ -378,6 +380,90 @@ async function importData(d, label) {
 }
 function snapshotData() {
   return { app: "kasa-defteri", version: 1, savedAt: new Date().toISOString(), accounts: S.accounts.map(x => ({ ...x })), contacts: S.contacts.map(x => ({ ...x })), txns: S.txns.map(x => ({ ...x })), plans: S.plans.map(x => ({ ...x })) };
+}
+
+/* ---------- Gmail'den ekstre (gmail.readonly, yalnızca okuma; izin sadece bu düğmeye basınca istenir) ---------- */
+const GMAIL_Q = '(ekstre OR "hesap hareket" OR "hesap özeti" OR "hesap ozeti" OR "kart özeti" OR "e-ekstre") newer_than:120d';
+const Gmail = {
+  token: null, exp: 0, list: null, busy: false, err: "",
+  load() { try { const t = JSON.parse(ls.get("kd-gmail-token") || "null"); if (t && user && t.uid === user.uid && t.exp > Date.now() + 60000) { this.token = t.token; this.exp = t.exp; } } catch (e) { } },
+  valid() { return this.token && this.exp > Date.now() + 30000; },
+  async authorize() {
+    try {
+      const p = provider(); p.addScope(GMAIL_SCOPE);
+      const res = await fb.au.reauthenticateWithPopup(user, p), cred = fb.au.GoogleAuthProvider.credentialFromResult(res);
+      if (!cred || !cred.accessToken) throw new Error("izin alınamadı");
+      this.token = cred.accessToken; this.exp = Date.now() + 55 * 60 * 1000;
+      ls.set("kd-gmail-token", JSON.stringify({ uid: user.uid, token: this.token, exp: this.exp }));
+      Drive.takeToken(cred); // aynı jeton Drive için de geçerli
+      return true;
+    } catch (e) { if (e && e.code !== "auth/popup-closed-by-user") toast("Gmail izni alınamadı: " + (e.message || e.code)); return false; }
+  },
+  async api(path) {
+    const r = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/" + path, { headers: { Authorization: "Bearer " + this.token } });
+    if (r.status === 401) { this.token = null; ls.del("kd-gmail-token"); const e = new Error("Gmail izninin süresi doldu"); e.status = 401; throw e; }
+    if (!r.ok) { let m = ""; try { m = (await r.json()).error.message; } catch (_) { } const e = new Error(m || "Gmail hatası " + r.status); e.status = r.status; throw e; }
+    return r.json();
+  },
+  errText(e) {
+    if (e && e.status === 401) return "Gmail izninin süresi doldu. Yeniden bağlan.";
+    if (e && e.status === 403) return "Gmail erişimi reddedildi. Google Cloud'da Gmail API'yi etkinleştir (README › Gmail).";
+    return (e && e.message) || "Gmail okunamadı";
+  },
+  parts(p, out = []) { if (!p) return out; if (p.filename && p.body && p.body.attachmentId) out.push({ name: p.filename, mime: p.mimeType, id: p.body.attachmentId, size: p.body.size || 0 }); (p.parts || []).forEach(x => this.parts(x, out)); return out; },
+  html(p) { if (!p) return ""; if (p.mimeType === "text/html" && p.body && p.body.data) return b64u(p.body.data, true); for (const x of p.parts || []) { const h = this.html(x); if (h) return h; } return ""; },
+  async search(q) {
+    this.busy = true; this.err = ""; gmailPanel();
+    try {
+      const r = await this.api("messages?maxResults=25&q=" + encodeURIComponent(q));
+      const msgs = await Promise.all((r.messages || []).map(m => this.api("messages/" + m.id + "?format=full")));
+      this.list = msgs.map(m => { const h = n => ((m.payload.headers || []).find(x => x.name.toLowerCase() === n) || {}).value || "";
+        return { id: m.id, from: h("from"), subject: h("subject"), date: new Date(+m.internalDate), files: this.parts(m.payload).filter(f => /\.(pdf|xlsx?|csv|ods|html?)$/i.test(f.name)), hasHtml: /<table/i.test(this.html(m.payload)), payload: m.payload };
+      });
+    } catch (e) { this.err = this.errText(e); }
+    this.busy = false; gmailPanel();
+  }
+};
+function b64u(s, text) { const bin = atob(s.replace(/-/g, "+").replace(/_/g, "/")); const u = Uint8Array.from(bin, c => c.charCodeAt(0)); return text ? new TextDecoder().decode(u) : u; }
+const gmailSender = f => ((f || "").match(/<([^>]+)>/) || [, f || ""])[1].toLowerCase();
+const gmailPat = (from, name) => gmailSender(from) + "|" + IMP.up(name || "eposta").replace(/[0-9]+/g, "#").replace(/\s+/g, "");
+const gmailDone = () => { try { return JSON.parse(ls.get("kd-gmail-done") || "{}"); } catch (e) { return {}; } };
+function gmailPanel() {
+  if (!live()) { openSheet("Gmail'den ekstre", `<div class="form"><p style="margin:0">Gmail bağlantısı için Google hesabınla giriş yapmış olman gerekir. Deneme modunda çalışmaz.</p></div>`); return; }
+  const G = Gmail, done = gmailDone(), q = ls.get("kd-gmail-q") || GMAIL_Q;
+  const body = `<div class="form" id="gmailPanel">
+    ${!G.valid() ? `<p style="margin:0">Bankaların e-postayla gönderdiği ekstreleri (PDF, Excel) Gmail'den doğrudan okuyup içe aktarır. Uygulama e-postalarını <b>sadece okur</b>; silemez, gönderemez. Okunan dosyalar yalnızca bu cihazda işlenir.</p>
+      <button class="btn primary" type="button" data-act="gmail-auth" style="justify-content:center;padding:12px">Gmail'e bağlan</button>
+      <p class="small-note" style="margin:0">Google "bu uygulama doğrulanmadı" derse: <b>Gelişmiş → Kasa Defteri'ne git</b> de. Uygulama senin; bu uyarı kişisel projelerde normaldir.</p>`
+    : `<label>Arama<input id="gm-q" value="${esc(q)}"></label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" type="button" data-act="gmail-search">${G.list ? "Yeniden ara" : "E-postaları ara"}</button><button class="btn ghost small" type="button" data-act="gmail-reset-q">Varsayılan arama</button></div>
+      ${G.err ? `<div class="notice warn" style="margin:0"><span>${esc(G.err)}</span></div>` : ""}
+      ${G.busy ? `<p class="muted">Gmail okunuyor…</p>` : G.list ? (G.list.length ? `<div class="list">${G.list.map(m => `<div class="row" style="display:block">
+        <div class="t" style="font-size:.9rem">${esc(m.subject || "(konu yok)")}</div>
+        <div class="m">${esc(gmailSender(m.from))} · ${dfmt.format(m.date)}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${m.files.map(f => { const k = m.id + "|" + f.name, did = done[k];
+          return `<button class="btn small ${did ? "" : "primary"}" type="button" data-gmail-msg="${esc(m.id)}" data-gmail-att="${esc(f.id)}" data-gmail-name="${esc(f.name)}">${did ? "✓ " : "⇣ "}${esc(f.name.length > 28 ? f.name.slice(0, 26) + "…" : f.name)}${did ? " · yüklendi" : ""}</button>`; }).join("")}
+          ${!m.files.length && m.hasHtml ? `<button class="btn small" type="button" data-gmail-msg="${esc(m.id)}" data-gmail-att="" data-gmail-name="eposta.html">${done[m.id + "|eposta.html"] ? "✓ " : "⇣ "}E-postadaki tabloyu oku</button>` : ""}
+          ${!m.files.length && !m.hasHtml ? `<span class="muted" style="font-size:.8rem">Okunabilir ek yok</span>` : ""}</div></div>`).join("")}</div>` : `<p class="muted">Bu aramayla e-posta bulunamadı. Aramayı değiştir (ör. <code>from:kuveytturk has:attachment</code>).</p>`) : ""}
+      <p class="small-note" style="margin:0">Bir eke dokununca hangi hesaba ait olduğunu seçersin; aynı bankanın sonraki ekstreleri o hesaba otomatik önerilir. Daha önce eklenen hareketler tekrar eklenmez.</p>`}
+  </div>`;
+  if ($("#gmailPanel")) $("#gmailPanel").outerHTML = body; else openSheet("Gmail'den ekstre", body);
+}
+async function gmailOpen(msgId, attId, name) {
+  const m = (Gmail.list || []).find(x => x.id === msgId); if (!m) return;
+  try {
+    toast("Ek indiriliyor…");
+    let file;
+    if (attId) { const r = await Gmail.api(`messages/${msgId}/attachments/${attId}`); file = new File([b64u(r.data)], name); }
+    else file = new File([Gmail.html(m.payload)], name, { type: "text/html" });
+    const pat = gmailPat(m.from, name), accs = (() => { try { return JSON.parse(ls.get("kd-gmail-acc") || "{}"); } catch (e) { return {}; } })();
+    const guess = acc(accs[pat]) ? accs[pat] : (S.accounts.find(a => gmailSender(m.from).includes(IMP.up(groupOf(a)).toLowerCase().replace(/[^a-z]/g, "").slice(0, 6))) || {}).id || ls.get("kd-imp-acc") || S.accounts[0]?.id;
+    openSheet("Hangi hesabın ekstresi?", `<form class="form" id="gmAccForm" data-kind="gmacc">
+      <p style="margin:0"><b>${esc(name)}</b><br><span class="muted" style="font-size:.86rem">${esc(m.subject || "")}</span></p>
+      <label>Hesap<select id="gm-acc">${accOpts(guess)}</select></label>
+      <div class="foot"><span></span><div class="r"><button type="button" class="btn" data-act="gmail">Geri</button><button class="btn primary" type="submit">Devam</button></div></div></form>`);
+    ui.gmailPending = { file, pat, key: msgId + "|" + name };
+  } catch (e) { toast(Gmail.errText(e)); }
 }
 
 /* ---------- Google Drive backup (Drive REST, drive.file) ---------- */
@@ -1245,6 +1331,7 @@ function openImport(accountId) {
     <p style="margin:0">İnternet veya mobil bankacılıktan <b>hesap hareketlerini PDF, Excel ya da CSV</b> olarak indir, sonra burada seç. Kayıtlar eklenmeden önce sana gösterilir.</p>
     <label>Hangi hesabın ekstresi?<select id="imp-acc">${accOpts(accId)}</select></label>
     <button class="btn primary" type="button" data-act="imp-pick" style="justify-content:center;padding:12px">Dosya seç</button>
+    <button class="btn" type="button" data-act="gmail" style="justify-content:center;padding:12px">✉ Gmail'deki ekstrelerden seç</button>
     <input type="file" id="stmtFile" accept=".pdf,.xlsx,.xls,.csv,.txt,.ods,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" hidden>
     ${S.txns.some(t => t.importKey) ? `<button class="btn ghost small" type="button" data-act="imports" style="justify-self:start;padding-left:0">Yüklediğin ekstreler · yanlış yüklemeyi geri al</button>` : ""}
     <details class="small-note"><summary>Ekstreyi nereden indiririm?</summary>
@@ -1461,6 +1548,7 @@ async function commitImport() {
     }
   }
   ls.set("kd-map:" + imp.sig, JSON.stringify(imp.map)); ls.set("kd-imp-acc", imp.accountId);
+  if (imp.gmailKey) { const d = gmailDone(); d[imp.gmailKey] = Date.now(); ls.set("kd-gmail-done", JSON.stringify(d)); }
   if (live()) {
     const ops = txs.map(t => { const { id, ...d } = t; return { type: "set", col: "txns", id, data: d }; });
     if (fix != null) { const { id, ...d } = { ...a, opening: fix }; ops.push({ type: "set", col: "accounts", id, data: d }); }
@@ -1503,6 +1591,10 @@ function submitForm(f) {
     const c = resolveCat(f, v("#f-dir")); if (!c) { toast("Yeni kategorinin adını yaz."); return; }
     const o = { ...(old || {}), id: id || uid8(), dir: v("#f-dir"), amount: parseAmt(v("#f-amount")), due: v("#f-due"), contactId: v("#f-con"), category: c.category, sub: c.sub, repeat: v("#f-rep"), note: v("#f-note"), status: old?.status || "bekliyor" };
     put("plans", o); toast(id ? "Vade güncellendi" : "Vade eklendi"); closeSheet();
+  } else if (kind === "gmacc") {
+    const P = ui.gmailPending; if (!P) return; const accId = v("#gm-acc");
+    try { const m = JSON.parse(ls.get("kd-gmail-acc") || "{}"); m[P.pat] = accId; ls.set("kd-gmail-acc", JSON.stringify(m)); } catch (e) { }
+    imp = { accountId: accId, gmailKey: P.key }; ui.gmailPending = null; closeSheet(); readStatement(P.file); return;
   } else if (kind === "account") {
     const limit = parseAmt(v("#f-limit")), avail = parseAmt(v("#f-avail"));
     const o = { id: id || uid8(), name: v("#f-name"), group: v("#f-group") || inferGroup(v("#f-name")) || (v("#f-kind") === "nakit" ? "Nakit" : ""), kind: v("#f-kind"), asset: v("#f-asset") || "TRY", opening: parseAmt(v("#f-open")) || 0 };
@@ -1587,6 +1679,7 @@ document.addEventListener("click", async e => {
   if (d.toggleGroup) { let c = {}; try { c = JSON.parse(ls.get("kd-collapsed") || "{}"); } catch (e) { } c[d.toggleGroup] = !c[d.toggleGroup]; ls.set("kd-collapsed", JSON.stringify(c)); return render(); }
   if (d.newInGroup) { ui.newGroup = d.newInGroup; const gl = accountGroups().find(g => g.name === d.newInGroup); if (gl && gl.list.every(isCash)) ui.newKind = "nakit"; return accountForm(); }
   if (d.renameGroup) return renameGroup(d.renameGroup);
+  if (d.gmailMsg) return gmailOpen(d.gmailMsg, d.gmailAtt, d.gmailName);
   if (d.planFor) { planForm({ contactId: d.planFor, dir: "tahsilat" }); return; }
   if (el.id === "addBtn") return newMenu();
   const a = d.act; if (!a) return;
@@ -1614,6 +1707,10 @@ document.addEventListener("click", async e => {
   if (a === "rates-refresh") { el.disabled = true; return fetchRates(true); }
   if (a === "rates-all") { ui.ratesAll = !ui.ratesAll; return ratesPanel(); }
   if (a === "import-stmt") return openImport(imp && imp.accountId);
+  if (a === "gmail") { Gmail.load(); gmailPanel(); if (Gmail.valid() && !Gmail.list && !Gmail.busy) Gmail.search(ls.get("kd-gmail-q") || GMAIL_Q); return; }
+  if (a === "gmail-auth") { if (await Gmail.authorize()) { gmailPanel(); Gmail.search(ls.get("kd-gmail-q") || GMAIL_Q); } return; }
+  if (a === "gmail-search") { const q = $("#gm-q").value.trim() || GMAIL_Q; ls.set("kd-gmail-q", q); return Gmail.search(q); }
+  if (a === "gmail-reset-q") { ls.del("kd-gmail-q"); $("#gm-q").value = GMAIL_Q; return Gmail.search(GMAIL_Q); }
   if (a === "imp-pick") { imp.accountId = $("#imp-acc").value; $("#stmtFile").value = ""; $("#stmtFile").click(); return; }
   if (a === "imp-commit") { el.disabled = true; el.textContent = "Ekleniyor…"; await commitImport(); return; }
   if (a === "export-json") return saveFile(`kasa-defteri-yedek-${TODAY}.json`, JSON.stringify(snapshotData(), null, 1), "application/json");
