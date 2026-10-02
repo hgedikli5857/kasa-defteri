@@ -126,10 +126,19 @@ async function fetchRates(force) {
     const j = await r.json(), auto = {};
     for (const [code] of ASSETS) if (code !== "TRY" && j[code] && +j[code].Buying > 0) auto[code] = +j[code].Buying;
     if (!Object.keys(auto).length) throw new Error("boş");
-    Object.assign(RATES, { auto, date: j.Update_Date || new Date().toISOString(), fetchedAt: Date.now(), failed: false });
+    Object.assign(RATES, { auto, date: j.Update_Date || new Date().toISOString(), fetchedAt: Date.now(), failed: false, retries: 0 });
     ls.set("kd-rates", JSON.stringify({ auto, date: RATES.date, fetchedAt: RATES.fetchedAt }));
     if (force) toast("Kurlar güncellendi");
-  } catch (e) { RATES.failed = true; if (force) toast("Kurlar alınamadı. İnternet bağlantını kontrol et ya da kuru elle gir."); }
+  } catch (e) {
+    // yedek: dövizler için ikinci kaynak (altın kurları son bilinen / elle girilen değerle kalır)
+    try {
+      const r2 = await fetch("https://open.er-api.com/v6/latest/TRY", { cache: "no-store" }); const j2 = await r2.json();
+      if (j2 && j2.rates) { const auto = { ...RATES.auto }; for (const c of ["USD", "EUR", "GBP", "CHF", "SAR"]) if (+j2.rates[c] > 0) auto[c] = Math.round(1 / j2.rates[c] * 10000) / 10000;
+        Object.assign(RATES, { auto, fetchedAt: Date.now() - 10 * 60e3, failed: true }); ls.set("kd-rates", JSON.stringify({ auto, date: RATES.date, fetchedAt: RATES.fetchedAt })); }
+    } catch (_) { RATES.failed = true; }
+    if (!force && (RATES.retries || 0) < 2) { RATES.retries = (RATES.retries || 0) + 1; setTimeout(() => { RATES.fetchedAt = 0; fetchRates(); }, 45e3 * RATES.retries); }
+    if (force) toast("Altın kurları şu an alınamadı; son bilinen kurlar kullanılıyor. İstersen Kurlar ekranından elle gir.");
+  }
   render(); if ($("#ratesPanel")) ratesPanel();
 }
 const rateOf = code => code === "TRY" ? 1 : (+RATES.manual[code] || RATES.auto[code] || DEMO_RATES[code] || null);
@@ -613,7 +622,7 @@ function viewIslemler() {
       <div class="amt ${sg > 0 ? "pos" : sg < 0 ? "neg" : "muted"}">${sg > 0 ? "+" : sg < 0 ? "−" : "⇄ "}${fmtAsset(t.amount, txAsset(t))}${t.type === "transfer" && t.toAmount != null && accAsset(acc(t.toAccountId)) !== txAsset(t) ? `<div class="muted" style="font-size:.78rem">→ ${fmtAsset(t.toAmount, accAsset(acc(t.toAccountId)))}</div>` : txAsset(t) !== "TRY" && t.type !== "transfer" ? `<div class="muted" style="font-size:.78rem">≈ ${money(txTRY(t))}</div>` : ""}</div></div>`;
   }
   return `<section class="panel"><div class="ph"><div><h2>İşlemler</h2><p>${rows.length} kayıt · <span class="pos">${money(inc)}</span> gelir · <span class="neg">${money(exp)}</span> gider</p></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="import-stmt">⇣ Ekstre içe aktar</button><button class="btn primary" data-act="new-txn">+ İşlem</button></div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="import-stmt">⇣ Ekstre içe aktar</button>${S.txns.some(t => t.importKey) ? `<button class="btn" data-act="imports">Yüklenen ekstreler</button>` : ""}<button class="btn primary" data-act="new-txn">+ İşlem</button></div></div>
     <div class="filters"><input id="fq" type="search" placeholder="Ara: kategori, cari, not, tutar" value="${esc(ui.q)}" aria-label="İşlemlerde ara">
     <select id="ftype" aria-label="Tür"><option value="">Tüm türler</option>${["gelir", "gider", "transfer"].map(x => `<option value="${x}" ${ui.ftype === x ? "selected" : ""}>${x[0].toLocaleUpperCase("tr") + x.slice(1)}</option>`).join("")}</select>
     <select id="facc" aria-label="Hesap"><option value="">Tüm hesaplar</option>${accountGroups().map(g => `<optgroup label="${esc(g.name)}"><option value="g:${esc(g.name)}" ${ui.facc === "g:" + g.name ? "selected" : ""}>${esc(g.name)} · tümü</option>${g.list.map(a => `<option value="${esc(a.id)}" ${ui.facc === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</optgroup>`).join("")}</select></div>
@@ -954,6 +963,73 @@ function spendingAnalysis() {
     </div></section>`;
 }
 
+/* --- yüklenen ekstreler: geri al / taşı --- */
+function importBatches() {
+  const m = new Map();
+  for (const t of S.txns) {
+    if (!t.importKey) continue;
+    const k = (t.importId || "eski") + "|" + t.accountId;
+    if (!m.has(k)) m.set(k, { key: k, legacy: !t.importId, file: t.importFile || "", at: t.importAt || "", accountId: t.accountId, txs: [] });
+    m.get(k).txs.push(t);
+  }
+  return [...m.values()].map(b => { const d = b.txs.map(t => t.date).sort(); return { ...b, from: d[0], to: d[d.length - 1], inc: sum(b.txs.filter(t => t.type === "gelir"), t => t.amount), exp: sum(b.txs.filter(t => t.type === "gider"), t => t.amount), prevOpening: b.txs.find(t => t.importPrevOpening != null)?.importPrevOpening }; })
+    .sort((x, y) => (y.at || "") < (x.at || "") ? -1 : 1);
+}
+function importsPanel() {
+  const bs = importBatches();
+  openSheet("Yüklenen ekstreler", `<div class="form">
+    <p style="margin:0">Yanlış hesaba ya da yanlış ekstre yüklediysen ilgili satıra dokun; işlemleri toplu <b>silebilir</b> veya <b>doğru hesaba taşıyabilirsin</b>.</p>
+    <div class="list">${bs.map(b => { const ac = acc(b.accountId);
+      return `<div class="row click" data-batch="${esc(b.key)}"><div style="min-width:0"><div class="t">${esc(b.legacy ? "Önceki içe aktarımlar" : (b.file || "Ekstre"))}</div>
+        <div class="m">${esc(ac ? accName(ac) : "Silinmiş hesap")} · ${b.txs.length} işlem · ${dshort(b.from)} – ${dshort(b.to)}${b.at ? " · yüklendi " + tfmt.format(new Date(b.at)) : ""}</div></div>
+        <div class="amt" style="font-size:.85rem"><span class="pos">+${money0(b.inc)}</span><br><span class="neg">−${money0(b.exp)}</span></div></div>`; }).join("") || `<p class="muted">Ekstreden yüklenmiş işlem yok.</p>`}</div>
+    <div class="foot"><span></span><div class="r"><button class="btn" data-close>Kapat</button></div></div></div>`);
+}
+function batchPanel(key) {
+  const b = importBatches().find(x => x.key === key); if (!b) return importsPanel();
+  const ac = acc(b.accountId), code = accAsset(ac);
+  const prevOk = b.prevOpening != null && ac && b.txs.some(t => t.importPrevOpening != null && t.importKey.startsWith(ac.id + "|"));
+  openSheet("Ekstreyi düzelt", `<div class="form" id="batchPanel" data-key="${esc(key)}">
+    <p style="margin:0"><b>${esc(b.legacy ? "Önceki içe aktarımlar" : (b.file || "Ekstre"))}</b> · ${esc(ac ? accName(ac) : "")}<br><span class="muted" style="font-size:.88rem">${b.txs.length} işlem · ${dshort(b.from)} – ${dshort(b.to)}</span></p>
+    ${b.legacy ? `<p class="small-note" style="margin:0">Bu kayıtlar ekstre geçmişi tutulmadan önce yüklendi; bu hesaba ekstreden gelen tüm işlemler birlikte listeleniyor. Doğru olanların işaretini kaldır.</p>` : ""}
+    <label style="display:flex;gap:8px;align-items:center;font-size:.88rem"><input type="checkbox" id="b-all" style="width:auto" checked> Tümünü seç</label>
+    <div class="list" style="max-height:40vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:0 8px">
+      ${b.txs.slice().sort((x, y) => x.date < y.date ? -1 : 1).map(t => `<label class="row" style="grid-template-columns:auto minmax(0,1fr) auto;cursor:pointer"><input type="checkbox" class="b-sel" value="${esc(t.id)}" checked style="width:auto">
+        <span style="min-width:0"><span class="t" style="display:block;font-size:.9rem">${esc(t.note || catLabel(t))}</span><span class="m">${dshort(t.date)} · ${esc(catLabel(t))}</span></span>
+        <span class="amt ${t.type === "gelir" ? "pos" : "neg"}" style="font-size:.9rem">${t.type === "gelir" ? "+" : "−"}${fmtAsset(t.amount, code)}</span></label>`).join("")}
+    </div>
+    <div style="display:grid;gap:8px;border-top:1px solid var(--line);padding-top:12px">
+      <b>Doğru hesaba taşı</b>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><select id="b-target" style="flex:1 1 200px">${accOpts(S.accounts.find(x => x.id !== b.accountId)?.id)}</select><button class="btn primary" type="button" data-act="batch-move">Seçilenleri taşı</button></div>
+    </div>
+    <div style="display:grid;gap:8px;border-top:1px solid var(--line);padding-top:12px">
+      <b>Ya da tamamen sil</b>
+      ${prevOk && +ac.opening !== b.prevOpening ? `<label style="display:flex;gap:8px;align-items:center;font-size:.88rem"><input type="checkbox" id="b-restore" style="width:auto" checked> Yükleme sırasında değişen açılış bakiyesini eski değerine (${fmtAsset(b.prevOpening, code)}) döndür</label>` : ""}
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn danger" type="button" data-act="batch-del">Seçilenleri sil</button><button class="btn" type="button" data-act="imports">Geri</button></div>
+    </div></div>`);
+}
+async function batchApply(kind, btn) {
+  const key = $("#batchPanel").dataset.key, b = importBatches().find(x => x.key === key); if (!b) return;
+  const ids = new Set([...document.querySelectorAll(".b-sel:checked")].map(i => i.value));
+  const list = b.txs.filter(t => ids.has(t.id)); if (!list.length) { toast("Önce işlem seç."); return; }
+  if (kind === "del" && btn.dataset.armed !== "1") { btn.dataset.armed = "1"; btn.textContent = `Evet, ${list.length} işlemi sil`; return; }
+  const ops = [];
+  if (kind === "del") {
+    list.forEach(t => ops.push({ type: "delete", col: "txns", id: t.id }));
+    const ac = acc(b.accountId); if ($("#b-restore")?.checked && ac) { const { id, ...d } = { ...ac, opening: b.prevOpening }; ops.push({ type: "set", col: "accounts", id, data: d }); }
+  } else {
+    const to = $("#b-target").value; if (to === b.accountId) { toast("Farklı bir hesap seç."); return; }
+    list.forEach(t => { const { id, importPrevOpening, ...d } = { ...t, accountId: to, importKey: t.importKey.replace(/^[^|]+/, to) }; ops.push({ type: "set", col: "txns", id, data: d }); });
+  }
+  if (live()) { if (!(await safe(() => batchWrite(ops)))) return; Drive.dirty(); }
+  else {
+    for (const o of ops) { if (o.type === "delete") S.txns = S.txns.filter(t => t.id !== o.id); else if (o.col === "txns") { const i = S.txns.findIndex(t => t.id === o.id); S.txns[i] = { id: o.id, ...o.data }; } else { const ac = acc(o.id); Object.assign(ac, o.data); } }
+    saveDemo(); render();
+  }
+  toast(kind === "del" ? `${list.length} işlem silindi` : `${list.length} işlem ${accName(acc($("#b-target").value))} hesabına taşındı`);
+  closeSheet();
+}
+
 function accountPanel() {
   if (mode === "demo") {
     openSheet("Deneme modu", `<div class="form"><p style="margin:0">Firebase ayarları yapılmadığı için kayıtlar yalnızca bu cihazda tutuluyor. <b>firebase-config.js</b> dosyasını doldurduğunda Google ile giriş, anlık senkron ve Drive yedeği açılır.</p>
@@ -1045,6 +1121,7 @@ function openImport(accountId) {
     <label>Hangi hesabın ekstresi?<select id="imp-acc">${accOpts(accId)}</select></label>
     <button class="btn primary" type="button" data-act="imp-pick" style="justify-content:center;padding:12px">Dosya seç</button>
     <input type="file" id="stmtFile" accept=".pdf,.xlsx,.xls,.csv,.txt,.ods,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" hidden>
+    ${S.txns.some(t => t.importKey) ? `<button class="btn ghost small" type="button" data-act="imports" style="justify-self:start;padding-left:0">Yüklediğin ekstreler · yanlış yüklemeyi geri al</button>` : ""}
     <details class="small-note"><summary>Ekstreyi nereden indiririm?</summary>
       <p>Çoğu bankada: <b>Hesaplarım → hesabı seç → Hesap hareketleri → tarih aralığı → İndir / Excel</b>. Mobil uygulamada bulamazsan internet şubesinden indir. PDF de olur; taranmış (fotoğraf) PDF'ler okunamaz. Şifreli PDF'te şifre sorulur.</p></details>
   </div>`);
@@ -1185,9 +1262,10 @@ function impMapChanged() {
 }
 async function commitImport() {
   const sel = imp.items.filter(x => x.sel), bi = impBalanceInfo();
-  const code = accAsset(acc(imp.accountId));
-  const txs = sel.map(x => { const [category, sub] = x.cat.split("|"); const t = { id: uid8(), type: x.type, amount: x.amt, date: x.date, category, sub: sub || "", accountId: imp.accountId, contactId: x.contactId || "", note: x.desc.slice(0, 140), importKey: x.key }; if (code !== "TRY") t.rate = rateOf(code); return t; });
+  const code = accAsset(acc(imp.accountId)), batchId = uid8(), batchAt = new Date().toISOString();
+  const txs = sel.map(x => { const [category, sub] = x.cat.split("|"); const t = { id: uid8(), type: x.type, amount: x.amt, date: x.date, category, sub: sub || "", accountId: imp.accountId, contactId: x.contactId || "", note: x.desc.slice(0, 140), importKey: x.key, importId: batchId, importFile: (imp.fileName || "").slice(0, 80), importAt: batchAt }; if (code !== "TRY") t.rate = rateOf(code); return t; });
   const a = acc(imp.accountId), fix = imp.fixOpening && bi && Math.abs(bi.diff) >= 0.01 ? Math.round(((+a.opening || 0) + bi.diff) * 100) / 100 : null;
+  if (fix != null) txs.forEach(t => { t.importPrevOpening = +a.opening || 0; });
   ls.set("kd-map:" + imp.sig, JSON.stringify(imp.map)); ls.set("kd-imp-acc", imp.accountId);
   if (live()) {
     const ops = txs.map(t => { const { id, ...d } = t; return { type: "set", col: "txns", id, data: d }; });
@@ -1266,7 +1344,7 @@ window.addEventListener("offline", renderChips);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && iso(new Date()) !== TODAY) render(); });
 
 document.addEventListener("click", async e => {
-  const el = e.target.closest("button,[data-edit-txn],[data-edit-plan],[data-edit-account],[data-show-contact],.overlay");
+  const el = e.target.closest("button,[data-edit-txn],[data-edit-plan],[data-edit-account],[data-show-contact],[data-batch],.overlay");
   if (!el) return;
   if (el.id === "ov" && e.target === el) return closeSheet();
   const d = el.dataset;
@@ -1287,6 +1365,7 @@ document.addEventListener("click", async e => {
   if (d.editAccount) { const a = acc(d.editAccount); if (a) accountForm(a); return; }
   if (d.editContact) { const c = con(d.editContact); if (c) contactForm(c); return; }
   if (d.showContact) { const c = con(d.showContact); if (c) contactDetail(c); return; }
+  if (d.batch) return batchPanel(d.batch);
   if (d.an) { ui.anPeriod = d.an; return render(); }
   if (d.cmType) { CM.type = d.cmType; CM.edit = null; return catManager(); }
   if (d.cmAddsub != null) { CM.edit = { i: +d.cmAddsub, k: "sub" }; return catManager(); }
@@ -1314,6 +1393,9 @@ document.addEventListener("click", async e => {
   if (a === "new-account") return accountForm();
   if (a === "new-contact") return contactForm();
   if (a === "csv") return exportCsv();
+  if (a === "imports") return importsPanel();
+  if (a === "batch-del") return batchApply("del", el);
+  if (a === "batch-move") return batchApply("move", el);
   if (a === "cats") { CM.edit = null; return catManager(); }
   if (a === "rates") return ratesPanel();
   if (a === "rates-save") return saveManualRates();
@@ -1361,6 +1443,7 @@ document.addEventListener("input", e => {
 document.addEventListener("change", async e => {
   if (e.target.id === "ftype") { ui.ftype = e.target.value; render(); }
   else if (e.target.id === "facc") { ui.facc = e.target.value; render(); }
+  else if (e.target.id === "b-all") { document.querySelectorAll(".b-sel").forEach(i => { i.checked = e.target.checked; }); }
   else if (e.target.id === "f-cat") {
     const nw = e.target.value === "__new", ni = $("#f-cat-new"); ni.hidden = !nw; if (nw) ni.focus();
     const sub = $("#f-sub"); if (sub) { sub.innerHTML = subOptions(e.target.dataset.ctype, nw ? "" : e.target.value, ""); $("#f-sub-new").hidden = true; }
