@@ -93,9 +93,14 @@ const ui = { tab: new URLSearchParams(location.search).get("tab") || ls.get("kd-
 
 const acc = id => S.accounts.find(a => a.id === id);
 const con = id => S.contacts.find(c => c.id === id);
+// Kart/kredi hesaplarında bankadan alınan "kalan limit" bir sabit noktadır (syncBal @ syncDate):
+// o tarihe kadarki işlemler bankanın rakamına zaten dahildir; yalnızca sonraki işlemler bakiyeyi değiştirir.
+const anchored = a => a && a.syncDate && a.syncBal != null;
 function balanceOf(a) {
-  let b = +a.opening || 0;
+  const anc = anchored(a), skip = anc ? new Set(a.syncIds || []) : null;
+  let b = anc ? +a.syncBal : (+a.opening || 0);
   for (const t of S.txns) {
+    if (anc && (t.date < a.syncDate || (t.date === a.syncDate && skip.has(t.id)) || (t.date === a.syncDate && t.importKey))) continue;
     if (t.type === "gelir" && t.accountId === a.id) b += t.amount;
     else if (t.type === "gider" && t.accountId === a.id) b -= t.amount;
     else if (t.type === "transfer") { if (t.accountId === a.id) b -= t.amount; if (t.toAccountId === a.id) b += (t.toAmount != null ? t.toAmount : t.amount); }
@@ -681,6 +686,9 @@ function viewHesaplar() {
   }).join("") || `<section class="panel"><p class="muted">Henüz hesap yok.</p></section>`}`;
 }
 const old0 = id => S.accounts.find(x => x.id === id);
+function creditAnchor(accId, limit, avail) {
+  return { syncBal: Math.round(-(limit - avail) * 100) / 100, syncDate: TODAY, syncIds: S.txns.filter(t => (t.accountId === accId || t.toAccountId === accId) && t.date === TODAY).map(t => t.id), limitSyncAt: new Date().toISOString() };
+}
 const isCredit = a => a && (a.kind === "kredi kartı" || a.kind === "kredi");
 function limitInfo(a) {
   if (!isCredit(a) || !(+a.limit > 0)) return null;
@@ -1277,7 +1285,12 @@ function renderImport() {
         <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="imp-inv" style="width:auto" ${m.invert ? "checked" : ""}> Gelir ve giderleri ters çevir <span class="muted">(kredi kartı ekstrelerinde harcamalar artı görünüyorsa)</span></label>
         <p class="small-note" style="margin:0">Bu eşleştirme bu bankanın dosyaları için hatırlanır.</p>
       </div></details>
-    ${bi ? `<div class="notice ${Math.abs(bi.diff) < 0.01 ? "" : "warn"}" style="margin:0"><span>${Math.abs(bi.diff) < 0.01 ? `<b>Bakiye tutuyor.</b> Bankadaki bakiye (${dshort(bi.date)}) ile uygulamadaki bakiye aynı: <b class="num">${money(bi.bank)}</b>` : `<b>Bakiye farkı var.</b> Bankada <b class="num">${money(bi.bank)}</b>, içe aktarma sonrası uygulamada <b class="num">${money(bi.after)}</b> olacak (fark ${signed(bi.diff)}).<br><label style="display:flex;gap:8px;align-items:center;margin-top:6px;color:var(--ink);font-size:.9rem"><input type="checkbox" id="imp-fix" style="width:auto" ${imp.fixOpening ? "checked" : ""}> Açılış bakiyesini düzelterek eşitle (${money((+acc(imp.accountId).opening || 0) + bi.diff)})</label>`}</span></div>` : ""}
+    ${isCredit(acc(imp.accountId)) ? `<div style="display:grid;gap:8px;border:1px solid var(--line);border-radius:10px;padding:12px">
+      <b style="font-size:.92rem">Kart limiti</b>
+      <div class="f2"><label>Toplam limit (₺)<input id="imp-limit" inputmode="decimal" value="${imp.limit != null ? amtStr(imp.limit) : acc(imp.accountId).limit ? amtStr(acc(imp.accountId).limit) : ""}" placeholder="Örn. 90.000"></label>
+      <label>Bankadaki güncel kalan limit (₺)<input id="imp-avail" inputmode="decimal" value="${imp.avail != null ? amtStr(imp.avail) : ""}" placeholder="Örn. 37.253,42"></label></div>
+      <p class="small-note" style="margin:0">Yazarsan kartın borcu bankadaki rakama sabitlenir; ekstredeki geçmiş harcamalar limiti ikinci kez düşürmez, sadece analizde kullanılır.</p></div>` : ""}
+    ${bi && !isCredit(acc(imp.accountId)) ? `<div class="notice ${Math.abs(bi.diff) < 0.01 ? "" : "warn"}" style="margin:0"><span>${Math.abs(bi.diff) < 0.01 ? `<b>Bakiye tutuyor.</b> Bankadaki bakiye (${dshort(bi.date)}) ile uygulamadaki bakiye aynı: <b class="num">${money(bi.bank)}</b>` : `<b>Bakiye farkı var.</b> Bankada <b class="num">${money(bi.bank)}</b>, içe aktarma sonrası uygulamada <b class="num">${money(bi.after)}</b> olacak (fark ${signed(bi.diff)}).<br><label style="display:flex;gap:8px;align-items:center;margin-top:6px;color:var(--ink);font-size:.9rem"><input type="checkbox" id="imp-fix" style="width:auto" ${imp.fixOpening ? "checked" : ""}> Açılış bakiyesini düzelterek eşitle (${money((+acc(imp.accountId).opening || 0) + bi.diff)})</label>`}</span></div>` : ""}
     ${impAnalysis(sel)}
     ${items.length ? `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
       <label style="display:flex;gap:8px;align-items:center;font-size:.88rem"><input type="checkbox" id="imp-all" style="width:auto" ${sel.length === items.length ? "checked" : ""}> Tümünü seç</label>
@@ -1327,14 +1340,23 @@ async function commitImport() {
   const txs = sel.map(x => { const [category, sub] = x.cat.split("|"); const t = { id: uid8(), type: x.type, amount: x.amt, date: x.date, category, sub: sub || "", accountId: imp.accountId, contactId: x.contactId || "", note: x.desc.slice(0, 140), importKey: x.key, importId: batchId, importFile: (imp.fileName || "").slice(0, 80), importAt: batchAt }; if (code !== "TRY") t.rate = rateOf(code); return t; });
   const a = acc(imp.accountId), fix = imp.fixOpening && bi && Math.abs(bi.diff) >= 0.01 ? Math.round(((+a.opening || 0) + bi.diff) * 100) / 100 : null;
   if (fix != null) txs.forEach(t => { t.importPrevOpening = +a.opening || 0; });
+  let accUpd = null;
+  if (isCredit(a)) {
+    const L = parseAmt($("#imp-limit")?.value), A = parseAmt($("#imp-avail")?.value);
+    if (L > 0 || ($("#imp-avail")?.value && A >= 0)) {
+      accUpd = { ...a, limit: L > 0 ? L : (+a.limit || 0) };
+      if ($("#imp-avail")?.value && A >= 0 && accUpd.limit > 0) Object.assign(accUpd, creditAnchor(a.id, accUpd.limit, A));
+    }
+  }
   ls.set("kd-map:" + imp.sig, JSON.stringify(imp.map)); ls.set("kd-imp-acc", imp.accountId);
   if (live()) {
     const ops = txs.map(t => { const { id, ...d } = t; return { type: "set", col: "txns", id, data: d }; });
     if (fix != null) { const { id, ...d } = { ...a, opening: fix }; ops.push({ type: "set", col: "accounts", id, data: d }); }
-    const ok = await safe(() => batchWrite(ops), `${txs.length} işlem eklendi`);
+    if (accUpd) { const { id, ...d } = accUpd; ops.push({ type: "set", col: "accounts", id, data: clean(d) }); }
+    const ok = await safe(() => batchWrite(ops), `${txs.length} işlem eklendi${accUpd && accUpd.syncDate ? " · kalan limit sabitlendi" : ""}`);
     if (!ok) return; Drive.dirty();
   } else {
-    S.txns.push(...txs); if (fix != null) a.opening = fix; saveDemo(); render(); toast(`${txs.length} işlem eklendi`);
+    S.txns.push(...txs); if (fix != null) a.opening = fix; if (accUpd) Object.assign(a, accUpd); saveDemo(); render(); toast(`${txs.length} işlem eklendi${accUpd && accUpd.syncDate ? " · kalan limit sabitlendi" : ""}`);
   }
   imp = null; closeSheet(); ui.tab = "islemler"; ls.set("kd-tab", "islemler"); render();
 }
@@ -1373,13 +1395,13 @@ function submitForm(f) {
     const limit = parseAmt(v("#f-limit")), avail = parseAmt(v("#f-avail"));
     const o = { id: id || uid8(), name: v("#f-name"), group: v("#f-group") || inferGroup(v("#f-name")), kind: v("#f-kind"), asset: v("#f-asset") || "TRY", opening: parseAmt(v("#f-open")) || 0 };
     if (isCredit(o)) {
+      const old = old0(o.id) || {};
       o.limit = limit > 0 ? limit : 0;
+      for (const k of ["syncBal", "syncDate", "syncIds", "limitSyncAt"]) if (old[k] != null) o[k] = old[k];
       if (limit > 0 && avail >= 0 && v("#f-avail") !== "") {
-        const target = -(limit - avail), old = old0(o.id);
-        const cur = old ? balanceOf({ ...old, opening: o.opening }) : o.opening;
-        o.opening = Math.round((o.opening + (target - cur)) * 100) / 100; o.limitSyncAt = new Date().toISOString();
-        setTimeout(() => toast(`Kart borcu ${money(-target)}, kalan limit ${money(avail)} olarak eşitlendi`), 50);
-      } else if (old0(o.id)?.limitSyncAt) o.limitSyncAt = old0(o.id).limitSyncAt;
+        Object.assign(o, creditAnchor(o.id, limit, avail));
+        setTimeout(() => toast(`Kart borcu ${money(limit - avail)}, kalan limit ${money(avail)} olarak eşitlendi`), 50);
+      }
     }
     ui.newGroup = ""; ui.newKind = "";
     if (!o.name) { toast("Hesap adı gir."); return; }
@@ -1539,6 +1561,7 @@ document.addEventListener("change", async e => {
     }
     else if (t.id === "imp-all") { imp.items.forEach(x => { x.sel = t.checked && x.dup !== "var"; }); renderImport(); }
     else if (t.id === "imp-fix") { imp.fixOpening = t.checked; renderImport(); }
+    else if (t.id === "imp-limit" || t.id === "imp-avail") { imp[t.id === "imp-limit" ? "limit" : "avail"] = parseAmt(t.value); }
     else if (/^imp-/.test(t.id)) impMapChanged();
   }
   else if (e.target.id === "importFile") {
