@@ -120,6 +120,18 @@ Banka hareketlerini tek tek yazmak yerine:
 - Dosyada bakiye sütunu varsa, uygulamadaki bakiye bankayla karşılaştırılır; istersen açılış bakiyesi düzeltilerek eşitlenir.
 - Bir satırın kategorisini değiştirince benzer açıklamalı satırlar da değişir; uygulama sonraki ekstrelerde bunu hatırlar.
 
+## Döviz, altın ve gümüş hesapları
+Hesap eklerken **Para / varlık cinsi** seç: TL, USD, EUR, GBP, CHF, SAR; gram altın (24 ayar), 22 ayar bilezik, 18/14 ayar (gr); çeyrek, yarım, tam, cumhuriyet, ata, reşat, gremse (adet); gümüş (gr).
+- Bakiye kendi biriminde tutulur, TL karşılığı canlı kurla (Truncgil Finans, alış fiyatı) hesaplanır. Başlıktaki **Kurlar** düğmesinden kuyumcu fiyatını elle girebilirsin.
+- Altın/döviz alımı: TL hesabından altın hesabına **Transfer** yap; "Giriş miktarı"nı (ör. 2 gr) yaz, birim fiyat gösterilir.
+- Döviz/altın hesabına gelir-gider girerken o günkü kur işleme kaydedilir; raporlar TL karşılığıyla hesaplanır.
+
+## Kategoriler ve alt kategoriler
+**Raporlar → Kategoriler** (ya da işlem formundaki "Kategorileri düzenle"): kategori ekle, adını değiştir (eski işlemler de güncellenir), sil; alt kategori ekle (ör. Faturalar → Elektrik). İşlem formunda "＋ Yeni kategori…" ile anında da eklenebilir.
+
+## Harcama analizi (Özet)
+Bu ay / geçen ay / son 3 ay için giderler kategoriye göre gruplanır. En yüksek kalem kırmızı, sonrakiler turuncu-amber gösterilir; önceki döneme göre artış/azalış, gelir-gider dengesi, yeni harcama kalemleri ve en çok harcanan yerler için uyarılar üretilir.
+
 ## Sorun giderme
 
 | Belirti | Çözüm |
