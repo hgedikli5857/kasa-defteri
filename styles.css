@@ -161,3 +161,10 @@ button.chip:hover{border-color:var(--muted)}
   .brand{padding-block:10px 10px}
   .brand h1{font-size:1.25rem}
 }
+
+.csum{display:grid;gap:8px}
+.csum-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.csum .lbl{font-size:.76rem;color:var(--muted)}
+.csum .big{font:600 1.18rem var(--f-num);font-variant-numeric:tabular-nums}
+.csum-rows{display:grid;grid-template-columns:1fr auto;gap:2px 10px;font-size:.82rem}
+.csum-rows span{color:var(--muted)}

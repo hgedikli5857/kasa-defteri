@@ -120,6 +120,10 @@ Banka hareketlerini tek tek yazmak yerine:
 - Dosyada bakiye sütunu varsa, uygulamadaki bakiye bankayla karşılaştırılır; istersen açılış bakiyesi düzeltilerek eşitlenir.
 - Bir satırın kategorisini değiştirince benzer açıklamalı satırlar da değişir; uygulama sonraki ekstrelerde bunu hatırlar.
 
+## Kredi kartı özeti
+Kart hesabını düzenle (veya ekstre içe aktarırken) şu dört alanı bankanın uygulamasından bakarak doldur: **Toplam limit**, **Kullanılabilir limit**, **Dönem içi harcamalar**, **Hesap kesim günü**.
+Özet ve Hesaplar ekranında banka uygulamasındaki gibi görünür: kullanılabilir limit, dönem içi harcamalar, toplam borç, önceki dönem/taksit farkı ve dönem tarihleri. Sonra eklediğin harcamalar iki rakama da otomatik yansır; kesim gününde dönem harcaması sıfırlanır.
+
 ## Döviz, altın ve gümüş hesapları
 Hesap eklerken **Para / varlık cinsi** seç: TL, USD, EUR, GBP, CHF, SAR; gram altın (24 ayar), 22 ayar bilezik, 18/14 ayar (gr); çeyrek, yarım, tam, cumhuriyet, ata, reşat, gremse (adet); gümüş (gr).
 - Bakiye kendi biriminde tutulur, TL karşılığı canlı kurla (Truncgil Finans, alış fiyatı) hesaplanır. Başlıktaki **Kurlar** düğmesinden kuyumcu fiyatını elle girebilirsin.
