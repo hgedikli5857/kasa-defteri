@@ -156,7 +156,7 @@ Hesap eklerken **Para / varlık cinsi** seç: TL, USD, EUR, GBP, CHF, SAR; gram 
 Özet'in üstünde sarı bir uyarı çıkarsa **İncele ve düzelt**: hatalı okunmuş tutarlar (iki sütun birleşmiş), kendi hesapların arasındaki para hareketleri (kendine havale, kart borcu ödemesi, ATM, BES katkısı) ve artık tanınabilen "Diğer" kayıtları tek ekranda düzeltilir. **Hesaplar arası** kategorisindeki kayıtlar bakiyeyi etkiler ama gelir/gider analizine ve raporlara girmez.
 
 ## Harcama analizi (Özet)
-Bu ay / geçen ay / son 3 ay için giderler kategoriye göre gruplanır. En yüksek kalem kırmızı, sonrakiler turuncu-amber gösterilir; önceki döneme göre artış/azalış, gelir-gider dengesi, yeni harcama kalemleri ve en çok harcanan yerler için uyarılar üretilir.
+Bu ay / geçen ay / son 3 ay için giderler kategoriye göre gruplanır. Ayrıca: **verisi eksik hesaplar** (ekstresi güncel olmayan), **ay sonu tahmini**, **en sık gidilen yer**, **en büyük 5 harcama**, **düzenli ödemeler / abonelikler** (aylık toplamıyla) ve **tanınmayan harcamalar** (yerinde kategori seçimi) gösterilir. Ayın ilk haftasında varsayılan görünüm geçen aydır. En yüksek kalem kırmızı, sonrakiler turuncu-amber gösterilir; önceki döneme göre artış/azalış, gelir-gider dengesi, yeni harcama kalemleri ve en çok harcanan yerler için uyarılar üretilir.
 
 ## Sorun giderme
 
