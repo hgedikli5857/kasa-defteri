@@ -25,7 +25,12 @@ function instPieces(t) {
   const per = Math.round(t.amount / n * 100) / 100;
   return Array.from({ length: n }, (_, i) => ({ ...t, amount: i === n - 1 ? Math.round((t.amount - per * (n - 1)) * 100) / 100 : per, date: addMonths(t.date, i), instK: i + 1, instOf: t.id }));
 }
-const spreadTx = list => list.flatMap(instPieces);
+const MOVE_CAT = "Hesaplar arası"; // kendi hesapları arasındaki para: gelir/gider analizine girmez
+const isMove = t => t && t.category === MOVE_CAT;
+const spreadTx = list => list.filter(t => !isMove(t)).flatMap(instPieces);
+const mySurname = () => { const n = (user && user.displayName) || ""; return n.trim().split(/\s+/).pop() || ""; };
+// birleşmiş tutar: 79999799.99 → 799.99 (ekstrede iki sütun yan yana okunmuştu)
+const splitDup = v => { const c = String(Math.round(Math.abs(v) * 100)), h = c.length / 2; return c.length >= 8 && c.length % 2 === 0 && c.slice(0, h) === c.slice(h) ? +c.slice(0, h) / 100 : null; };
 const INST_OPTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 18, 24, 36];
 function instInfo(d) { // ekstre satırı: "2/6 TAKSİT", "TAKSİT 2/6", "409,90 TL'LİK İŞLEMİN 2/2 TAKSİTİ"
   const U = String(d || "").toLocaleUpperCase("tr");
@@ -195,7 +200,7 @@ const catKind = type => type === "gelir" || type === "tahsilat" ? "gelir" : "gid
 function catNames(type) {
   const k = catKind(type), list = catsObj()[k].map(c => c.n);
   const used = [...S.txns.filter(t => t.type === k), ...S.plans.filter(p => catKind(p.dir) === k)].map(t => t.category).filter(Boolean);
-  return [...new Set([...list, ...used])].filter(c => c !== "Transfer");
+  return [...new Set([...list, ...used, MOVE_CAT])].filter(c => c !== "Transfer");
 }
 const subsOf = (type, cat) => (catsObj()[catKind(type)].find(c => c.n === cat) || { s: [] }).s;
 const catLabel = t => t.sub ? `${t.category} › ${t.sub}` : (t.category || "");
@@ -642,7 +647,7 @@ function viewOzet() {
   const overdue = pending().filter(x => x.due < TODAY);
   const kpi = (l, v, s, cls = "") => `<div class="panel kpi ${cls}"><div class="lbl">${l}</div><div class="val">${v}</div><div class="sub">${s}</div></div>`;
   const up = pending().filter(x => x.due <= addDays(TODAY, 14)).sort((a, b) => a.due < b.due ? -1 : 1);
-  return `<section class="grid g-kpi">
+  return `${dataCheckNotice()}<section class="grid g-kpi">
     ${kpi("Nakit ve banka", money(cash), S.accounts.some(isCash) ? `Nakit ${money0(cashTotal())} · Banka ${money0(cash - cashTotal())}` : `${S.accounts.length} hesap`, "hl")}
     ${kpi("Alacaklar", `<span class="pos">${money(r)}</span>`, `${pending().filter(x => x.dir === "tahsilat").length} bekleyen tahsilat`)}
     ${kpi("Borçlar", `<span class="neg">${money(p)}</span>`, `${pending().filter(x => x.dir === "ödeme").length} bekleyen ödeme`)}
@@ -721,7 +726,7 @@ function viewIslemler() {
   let rows = S.txns.filter(t => (!ui.ftype || t.type === ui.ftype) && (!ui.facc || (ui.facc.startsWith("g:") ? [t.accountId, t.toAccountId].some(id => id && acc(id) && groupOf(acc(id)) === ui.facc.slice(2)) : (t.accountId === ui.facc || t.toAccountId === ui.facc))));
   if (q) rows = rows.filter(t => [catLabel(t), t.note, txLabel(t), String(t.amount)].join(" ").toLocaleLowerCase("tr").includes(q));
   rows.sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
-  const inc = sum(rows.filter(t => t.type === "gelir"), txTRY), exp = sum(rows.filter(t => t.type === "gider"), txTRY);
+  const inc = sum(rows.filter(t => t.type === "gelir" && !isMove(t)), txTRY), exp = sum(rows.filter(t => t.type === "gider" && !isMove(t)), txTRY);
   let h = "", cur = "";
   for (const t of rows.slice(0, 300)) {
     const m = monthKey(t.date);
@@ -918,7 +923,7 @@ function catBars(list, color) {
 }
 function viewRaporlar() {
   const [a, b, lbl] = periodRange(ui.period);
-  const tx = S.txns.filter(t => t.date >= a && t.date <= b);
+  const tx = S.txns.filter(t => t.date >= a && t.date <= b && !isMove(t));
   const inc = tx.filter(t => t.type === "gelir"), exp = tx.filter(t => t.type === "gider");
   const I = sum(inc, txTRY), E = sum(exp, txTRY), N = I - E, rate = I ? Math.round(N / I * 100) : 0;
   const months = [...new Set(tx.map(t => monthKey(t.date)))].sort();
@@ -1107,8 +1112,12 @@ function spendingAnalysis() {
   // ayın ilk günlerinde (az harcama varken) varsayılan olarak geçen ayı göster
   const TX = spreadTx(S.txns); // taksitli alışverişler aylara bölünür
   const thisMonthN = TX.filter(t => t.type === "gider" && t.date >= TODAY.slice(0, 8) + "01" && t.date <= TODAY).length;
-  const per = ui.anPeriod || (thisMonthN < 5 && pd(TODAY).getDate() < 10 ? "gecen-ay" : "bu-ay"), R = analysisRange(per);
+  const day = pd(TODAY).getDate(), per = ui.anPeriod || (day <= 7 || (thisMonthN < 5 && day < 10) ? "gecen-ay" : "bu-ay"), R = analysisRange(per);
   const inR = (t, a, b) => t.date >= a && t.date <= b;
+  // karşılaştırma yalnızca verisi olan aylarla (ör. ekstre sadece 2 ay geriye gidiyorsa 3'e bölme)
+  { const ms = new Set(TX.filter(t => t.type === "gider" && t.date >= R.pa && t.date <= R.pb).map(t => monthKey(t.date))).size;
+    if (per === "3-ay") R.f = ms >= 3 ? 1 : 0; else R.f = ms ? (per === "bu-ay" ? day / new Date(pd(TODAY).getFullYear(), pd(TODAY).getMonth() + 1, 0).getDate() : 1) / ms : 0; }
+  const early = per === "bu-ay" && day < 15;
   const exp = TX.filter(t => t.type === "gider" && inR(t, R.a, R.b)), inc = TX.filter(t => t.type === "gelir" && inR(t, R.a, R.b));
   const prev = TX.filter(t => t.type === "gider" && inR(t, R.pa, R.pb));
   const E = sum(exp, txTRY), I = sum(inc, txTRY), PE = sum(prev, txTRY) * R.f;
@@ -1121,17 +1130,20 @@ function spendingAnalysis() {
     <div class="seg" role="group" aria-label="Analiz dönemi">${P.map(([k, l]) => `<button type="button" data-an="${k}" aria-pressed="${per === k}">${l}</button>`).join("")}</div></div>`;
   if (!arr.length) return `<section class="panel">${head}<p class="muted" style="margin:0">Bu dönemde gider yok. Ekstreni içe aktarınca harcamaların burada kategori kategori incelenir.</p></section>`;
   // uyarılar
-  const W = [], [tk, tv] = arr[0], ts = tv.v / E;
+  const W = [], [tk, tv] = arr.find(([k]) => !/^Diğer/.test(k)) || arr[0], ts = tv.v / E;
+  const unc0 = by["Diğer gider"]; if (unc0 && unc0.v / E >= 0.3) W.push({ l: "warn", t: `<b>Harcamaların %${Math.round(unc0.v / E * 100)} kadarı tanınamadı ("Diğer gider").</b> Analiz bu yüzden eksik; İşlemler'de bu kayıtlara kategori verirsen uygulama sonrakileri hatırlar.` });
   W.push({ l: ts >= 0.3 ? "neg" : "warn", t: `<b>En çok harcama: ${esc(tk)}</b> · ${money(tv.v)} · toplam gider içindeki payı <b>%${Math.round(ts * 100)}</b> (${tv.n} işlem).${ts >= 0.3 ? " Harcamalarının yaklaşık üçte biri tek kalemde; bu kategori için aylık üst sınır belirlemeyi düşün." : ""}` });
-  if (I > 0 && E > I) W.push({ l: "neg", t: `<b>Gider geliri aştı.</b> ${money(E - I)} açık var; bu dönem kazandığından fazlasını harcadın.` });
+  const movIn = sum(S.txns.filter(t => isMove(t) && t.type === "gelir" && inR(t, R.a, R.b)), txTRY);
+  if (early) {} else if (E > I && movIn >= E - I) W.push({ l: "warn", t: `<b>Gelirin eksik görünüyor.</b> Bu dönem harcaman ${money(E)}, kayıtlı gelirin ${money(I)}; paranın çoğu kendi hesaplarından aktarılmış (${money(movIn)}). Maaşın yattığı hesabın ekstresini de yüklersen gelir-gider dengesi doğru hesaplanır.` });
+  else if (I > 0 && E > I) W.push({ l: "neg", t: `<b>Gider geliri aştı.</b> ${money(E - I)} açık var; bu dönem kazandığından fazlasını harcadın.` });
   else if (I > 0 && E / I >= 0.85) W.push({ l: "warn", t: `<b>Gelirinin %${Math.round(E / I * 100)} kadarını harcadın.</b> Kenara kalan: ${money(I - E)}.` });
   arr.map(([k, o]) => { const base = (pby[k] || 0) * R.f; return { k, v: o.v, base, ch: base > 0 ? (o.v - base) / base : null }; })
-    .filter(x => x.ch != null && x.ch >= 0.3 && x.v - x.base >= 300).sort((x, y) => (y.v - y.base) - (x.v - x.base)).slice(0, 2)
+    .filter(x => !early && x.ch != null && x.ch >= 0.3 && x.v - x.base >= 300).sort((x, y) => (y.v - y.base) - (x.v - x.base)).slice(0, 2)
     .forEach(x => W.push({ l: x.ch >= 0.6 ? "neg" : "warn", t: `<b>${esc(x.k)} harcaman arttı:</b> ${R.cmp} ${money(x.base)} iken şimdi ${money(x.v)} (<b>+%${Math.round(x.ch * 100)}</b>).` }));
-  arr.filter(([k, o]) => !pby[k] && o.v >= Math.max(500, E * 0.08)).slice(0, 1).forEach(([k, o]) => W.push({ l: "warn", t: `<b>Yeni kalem: ${esc(k)}</b> · ${money(o.v)}. Önceki dönemde bu kategoride harcama yoktu.` }));
-  arr.map(([k, o]) => ({ k, v: o.v, base: (pby[k] || 0) * R.f })).filter(x => x.base >= 500 && x.v <= x.base * 0.7).slice(0, 1)
+  arr.filter(([k, o]) => !early && R.f > 0 && !pby[k] && o.v >= Math.max(500, E * 0.08)).slice(0, 1).forEach(([k, o]) => W.push({ l: "warn", t: `<b>Yeni kalem: ${esc(k)}</b> · ${money(o.v)}. Önceki dönemde bu kategoride harcama yoktu.` }));
+  arr.map(([k, o]) => ({ k, v: o.v, base: (pby[k] || 0) * R.f })).filter(x => !early && x.base >= 500 && x.v <= x.base * 0.7).slice(0, 1)
     .forEach(x => W.push({ l: "pos", t: `<b>${esc(x.k)} azaldı:</b> ${R.cmpTo} göre %${Math.round((1 - x.v / x.base) * 100)} daha az harcadın.` }));
-  const uncategorized = by["Diğer gider"]; if (uncategorized && uncategorized.v / E >= 0.1) W.push({ l: "warn", t: `<b>Harcamaların %${Math.round(uncategorized.v / E * 100)} kadarı "Diğer gider" kategorisinde.</b> İşlemler'den bunlara kategori verirsen analiz netleşir.` });
+  const uncategorized = by["Diğer gider"]; if (uncategorized && uncategorized.v / E >= 0.1 && uncategorized.v / E < 0.3) W.push({ l: "warn", t: `<b>Harcamaların %${Math.round(uncategorized.v / E * 100)} kadarı "Diğer gider" kategorisinde.</b> İşlemler'den bunlara kategori verirsen analiz netleşir.` });
   // en çok harcanan yerler
   const pl = {}; exp.forEach(t => { const k = t.note ? IMP.learnKey(t.note).split(" ").slice(0, 2).join(" ") : (con(t.contactId)?.name || ""); if (!k) return; (pl[k] = pl[k] || { n: 0, v: 0 }); pl[k].n++; pl[k].v += txTRY(t); });
   const places = Object.entries(pl).sort((x, y) => y[1].v - x[1].v).slice(0, 5);
@@ -1150,7 +1162,7 @@ function spendingAnalysis() {
       <div class="num" style="text-align:right;${i < 3 ? `color:${col};font-weight:600` : ""}">${money(o.v)}</div>
       <div style="grid-column:1/-1;height:8px;background:var(--surface-2);border-radius:4px;overflow:hidden"><div style="width:${(o.v / mx * 100).toFixed(1)}%;height:100%;background:${col}"></div></div>
       <div class="muted" style="font-size:.78rem;min-width:0">%${Math.round(sh * 100)} · ${o.n} işlem${subs ? " · " + subs : ""}</div>
-      <div style="font-size:.78rem;text-align:right;white-space:nowrap">${ch == null ? `<span class="muted">${pby[k] ? "" : "yeni"}</span>` : `<span class="${ch > 0.1 ? "neg" : ch < -0.1 ? "pos" : "muted"}">${ch >= 0 ? "▲" : "▼"} %${Math.abs(Math.round(ch * 100))}</span>`}</div></div>`; }).join("");
+      <div style="font-size:.78rem;text-align:right;white-space:nowrap">${ch == null ? `<span class="muted">${pby[k] || !R.f ? "" : "yeni"}</span>` : `<span class="${ch > 0.1 ? "neg" : ch < -0.1 ? "pos" : "muted"}">${ch >= 0 ? "▲" : "▼"} %${Math.abs(Math.round(ch * 100))}</span>`}</div></div>`; }).join("");
   const wcol = l => l === "neg" ? "background:var(--neg-soft);border-left:3px solid var(--neg)" : l === "pos" ? "background:var(--pos-soft);border-left:3px solid var(--pos)" : "background:var(--warn-soft);border-left:3px solid var(--warn)";
   return `<section class="panel">${head}
     <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center">${donut}
@@ -1161,6 +1173,55 @@ function spendingAnalysis() {
         ${places.map(([k, o], i) => `<div class="row" style="padding:9px 2px"><div><div class="t" ${i === 0 ? 'style="color:var(--neg)"' : ""}>${esc(k)}</div><div class="m">${o.n} işlem · ortalama ${money0(o.v / o.n)}</div></div><div class="amt ${i === 0 ? "neg" : ""}">${money(o.v)}</div></div>`).join("") || `<p class="muted">Açıklaması olan işlem yok.</p>`}
         <p class="small-note">Bir harcamanın kategorisi yanlışsa İşlemler'de kayda dokunup düzelt; ekstreden gelen benzer kayıtlar bundan sonra o kategoriye düşer.</p></div>
     </div></section>`;
+}
+
+/* --- veri kontrolü: analizi bozan kayıtlar --- */
+const ignored = () => { try { return JSON.parse(ls.get("kd-ign") || "{}"); } catch (e) { return {}; } };
+function dataIssues() {
+  const ign = ignored(), sn = mySurname();
+  const dupAmt = S.txns.filter(t => t.type !== "transfer" && !ign[t.id] && splitDup(t.amount));
+  const moves = S.txns.filter(t => t.type !== "transfer" && !isMove(t) && !ign[t.id] && IMP.ownMove(t.note, sn));
+  const mv = new Set(moves.map(t => t.id));
+  const recat = S.txns.filter(t => t.type !== "transfer" && /^Diğer (gider|gelir)$/.test(t.category || "") && t.note && !mv.has(t.id) && !ign[t.id]).map(t => {
+    let g = IMP.guessCategory(t.note, t.type === "gelir" ? 1 : -1, {}); if (/^Diğer/.test(g)) return null;
+    if (!g.includes("|")) { const gs = IMP.guessSub(t.note); if (gs && subsOf(t.type, g).includes(gs)) g += "|" + gs; }
+    return { t, g };
+  }).filter(Boolean);
+  return { dupAmt, moves, recat, n: dupAmt.length + moves.length + recat.length };
+}
+function dataCheckNotice() {
+  const D = dataIssues(); if (!D.n) return "";
+  const parts = [D.dupAmt.length ? `<b>${D.dupAmt.length} işlemin tutarı hatalı okunmuş</b> (ör. ${money(D.dupAmt[0].amount)} → ${money(splitDup(D.dupAmt[0].amount))})` : "", D.moves.length ? `<b>${D.moves.length} işlem kendi hesapların arasında para aktarımı</b> ama gelir/gider sayılıyor (${money0(sum(D.moves, txTRY))})` : "", D.recat.length ? `<b>${D.recat.length} "Diğer" kaydı</b> artık kategorilenebiliyor` : ""].filter(Boolean);
+  return `<div class="notice warn" style="margin:0 0 14px"><span>Özetteki rakamlar şu yüzden yanıltıcı: ${parts.join("; ")}.</span><button class="btn small primary" data-act="data-check">İncele ve düzelt</button></div>`;
+}
+function dataCheckPanel() {
+  const D = dataIssues(), sn = mySurname();
+  const row = (t, right, why) => `<label class="row" style="grid-template-columns:auto minmax(0,1fr) auto;cursor:pointer"><input type="checkbox" class="dc-sel" value="${esc(t.id)}" checked style="width:auto">
+    <span style="min-width:0"><span class="t" style="display:block;font-size:.88rem">${esc((t.note || catLabel(t)).slice(0, 70))}</span><span class="m">${dshort(t.date)} · ${esc(accName(acc(t.accountId)) || "")} · ${why}</span></span><span class="amt" style="font-size:.86rem;text-align:right">${right}</span></label>`;
+  openSheet("Veri kontrolü", `<div class="form" id="dcPanel">
+    ${D.dupAmt.length ? `<div><b>Hatalı okunan tutarlar</b><p class="small-note" style="margin:2px 0 6px">Yurt dışı harcamalarda ekstredeki iki tutar sütunu yan yana okunup birleşmiş. Okuyucu düzeltildi; bu kayıtların tutarı da düzelir.</p>
+      <div class="list" style="border:1px solid var(--line);border-radius:8px;padding:0 8px">${D.dupAmt.map(t => row(t, `<s class="muted">${money(t.amount)}</s><br><b>${money(splitDup(t.amount))}</b>`, esc(t.category || ""))).join("")}</div></div>` : ""}
+    ${D.moves.length ? `<div><b>Kendi hesapların arası para hareketleri</b><p class="small-note" style="margin:2px 0 6px">Kendi hesabından kendine havale, kart borcu ödemesi, ATM yatırma/çekme gibi hareketler gelir veya gider değildir; analizde gelirini ve giderini şişirir. Seçilenler <b>"${MOVE_CAT}"</b> kategorisine alınır: bakiyeler değişmez, sadece analiz ve raporlardan çıkar.</p>
+      <div class="list" style="max-height:44vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:0 8px">${D.moves.sort((a, b) => b.amount - a.amount).map(t => row(t, `<span class="${t.type === "gelir" ? "pos" : "neg"}">${t.type === "gelir" ? "+" : "−"}${money(t.amount)}</span>`, `${t.type} · ${esc(IMP.ownMove(t.note, sn))}`)).join("")}</div></div>` : ""}
+    ${D.recat.length ? `<div><b>Kategorisi bulunabilen "Diğer" kayıtları</b><p class="small-note" style="margin:2px 0 6px">Yeni eklenen tanıma kurallarıyla (lokanta, EGO, KKDF/vade farkı, mobilya…) bu kayıtların kategorisi bulundu.</p>
+      <div class="list" style="max-height:36vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:0 8px">${D.recat.map(({ t, g }) => row(t, `<span class="${t.type === "gelir" ? "pos" : "neg"}">${money(t.amount)}</span>`, `→ <b>${esc(g.replace("|", " › "))}</b>`)).join("")}</div></div>` : ""}
+    <div class="foot"><button type="button" class="btn ghost small" data-act="dc-ignore">Seçilenleri yok say</button><div class="r"><button type="button" class="btn" data-close>Vazgeç</button><button type="button" class="btn primary" data-act="dc-apply">Seçilenleri düzelt</button></div></div>
+  </div>`);
+}
+async function dataCheckApply(ignore) {
+  const ids = new Set([...document.querySelectorAll(".dc-sel:checked")].map(i => i.value)); if (!ids.size) { toast("Önce kayıt seç."); return; }
+  if (ignore) { const g = ignored(); ids.forEach(id => { g[id] = 1; }); ls.set("kd-ign", JSON.stringify(g)); toast(`${ids.size} kayıt yok sayıldı`); closeSheet(); return render(); }
+  const sn = mySurname(), ops = [], rc = new Map(dataIssues().recat.map(x => [x.t.id, x.g]));
+  for (const t of S.txns.filter(t => ids.has(t.id))) {
+    const o = { ...t }, f = splitDup(t.amount);
+    if (f) { o.amount = f; const p = (o.importKey || "").split("|"); if (p.length >= 3) { p[2] = String((+p[2] < 0 ? -1 : 1) * f); o.importKey = p.join("|"); } }
+    if (!isMove(t) && IMP.ownMove(t.note, sn)) { o.category = MOVE_CAT; o.sub = ""; }
+    else if (rc.has(t.id)) { const [c, sb = ""] = rc.get(t.id).split("|"); o.category = c; o.sub = sb; }
+    const { id, ...d } = o; ops.push({ type: "set", col: "txns", id, data: d });
+  }
+  if (live()) { if (!(await safe(() => batchWrite(ops)))) return; Drive.dirty(); }
+  else { ops.forEach(o => { const i = S.txns.findIndex(t => t.id === o.id); S.txns[i] = { id: o.id, ...o.data }; }); saveDemo(); }
+  toast(`${ops.length} kayıt düzeltildi`); closeSheet(); render();
 }
 
 /* --- yüklenen ekstreler: geri al / taşı --- */
@@ -1474,7 +1535,7 @@ function buildImpItems() {
       return { ...x, amount: Math.abs(x.amount), key, type: "gelir", amt, dup: "kart", sel: false, cat: "Diğer gelir", contactId: "" };
     }
     if (U.code !== "TRY" && TRADE_RX.test(D)) return { ...x, key, type, amt, dup: exact ? "var" : maybe ? "olası" : "", sel: !exact && !maybe, cat: type === "gelir" ? "Diğer gelir" : "Diğer gider", contactId: "", trade: true, tl: x.tl || Math.round(amt * (x.price || rateOf(U.code) || 0) * 100) / 100 };
-    let cat = IMP.guessCategory(x.desc, x.amount, learned);
+    let cat = IMP.ownMove(x.desc, mySurname()) ? MOVE_CAT : IMP.guessCategory(x.desc, x.amount, learned);
     if (ct && /^Diğer/.test(cat) && byContact[ct.id + "|" + type]) cat = byContact[ct.id + "|" + type];
     if (!cat.includes("|")) { const sg = IMP.guessSub(x.desc); if (sg && subsOf(type, cat).includes(sg)) cat += "|" + sg; }
     const item = { ...x, key, type, amt, dup: exact ? "var" : maybe ? "olası" : "", sel: !exact && !maybe, cat, contactId: ct ? ct.id : "" };
@@ -1772,6 +1833,9 @@ document.addEventListener("click", async e => {
   if (a === "rates-refresh") { el.disabled = true; return fetchRates(true); }
   if (a === "rates-all") { ui.ratesAll = !ui.ratesAll; return ratesPanel(); }
   if (a === "import-stmt") return openImport(imp && imp.accountId);
+  if (a === "data-check") return dataCheckPanel();
+  if (a === "dc-apply") return dataCheckApply(false);
+  if (a === "dc-ignore") return dataCheckApply(true);
   if (a === "gmail") { Gmail.load(); gmailPanel(); if (Gmail.valid() && !Gmail.list && !Gmail.busy) Gmail.search(ls.get("kd-gmail-q") || GMAIL_Q); return; }
   if (a === "gmail-auth") { if (await Gmail.authorize()) { gmailPanel(); Gmail.search(ls.get("kd-gmail-q") || GMAIL_Q); } return; }
   if (a === "gmail-search") { const q = $("#gm-q").value.trim() || GMAIL_Q; ls.set("kd-gmail-q", q); return Gmail.search(q); }

@@ -359,6 +359,9 @@ export function parseAmount(v, qty) {
   const R = qty ? 1000 : 100;
   if (typeof v === "number") return isFinite(v) ? Math.round(v * R) / R : null;
   let s = String(v).trim(); if (!s) return null;
+  // bir hücrede iki tutar (ör. yurt dışı harcama: "799,99 799,99" ya da "19,99 USD 799,99 TL") → sondaki (TL) tutar
+  const toks = s.match(/[-+]?\d{1,3}(?:\.\d{3})*,\d{2,4}|[-+]?\d+\.\d{2}(?!\d)/g);
+  if (toks && toks.length > 1 && /\d[,.]\d{2,4}\D+[-+]?\d/.test(s)) s = s.slice(s.lastIndexOf(toks[toks.length - 1]));
   let neg = /^\(.*\)$/.test(s) || /^-|-\s*$|\s-$/.test(s.replace(/\s*(TL|TRY|₺)\s*$/i, ""));
   if (/\b(B|BORC|BORÇ)\s*$/i.test(s)) neg = true;
   s = s.replace(/[^\d.,]/g, "");
@@ -369,6 +372,17 @@ export function parseAmount(v, qty) {
   else if (ld >= 0 && /^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, "");
   const n = parseFloat(s); if (!isFinite(n)) return null;
   return Math.round((neg ? -n : n) * R) / R;
+}
+// Kendi hesapları arası para hareketi mi? (gelir/gider sayılmamalı)
+export function ownMove(desc, surname) {
+  const n = norm(desc || "");
+  const m = n.match(/GONDEREN HESAP NO\s*:?\s*(\d+).*ALICI HESAP NO\s*:?\s*(\d+)/); if (m && m[1] === m[2]) return "kendi alt hesapların arası";
+  if (/KREDI KARTI BORC ODEME|KREDI KARTI NO\s*:|\bK\.\s?KART\b|KART BORCU? ODEME/.test(n)) return "kredi kartı ödemesi";
+  if (/YATIRIM HESABI(NDAN|NA)|PORTFOY NOLU/.test(n)) return "yatırım hesabı aktarımı";
+  if (/KATEM BES|BES KATKI|BIREYSEL EMEKLILIK|EMEKLILIK KATKI|\bBES\b.{0,12}(KATKI|ODEME|TAHSILAT)/.test(n)) return "BES katkı payı (birikim)";
+  if (/ATM.{0,25}(NAKIT YATIRMA|PARA CEKME)|(NAKIT YATIRMA|PARA CEKME).{0,25}ATM/.test(n)) return "ATM (nakit ↔ banka)";
+  const sn = norm(surname || ""); if (sn.length >= 3 && n.split(/[,\-]/).filter(p => p.includes(sn)).length >= 2) return "kendi adına havale";
+  return null;
 }
 // Açıklamadaki miktar: "ALTIN ALIS 3,00 GR", "2 ADET CEYREK"
 export function qtyFromDesc(d) {
@@ -405,18 +419,18 @@ export function extract(rows, headerIdx, m, opt = {}) {
 const RULES = [
   ["Kira", ["KIRA"]],
   ["Vergi / SGK", ["SGK", "VERGI", "GIB ", "GELIR IDARESI", "KDV", "MTV", "STOPAJ", "BAG-KUR", "BAGKUR", "TAPU HARC", "TRAFIK CEZA", "BELEDIYE EMLAK"]],
-  ["Faturalar", ["ELEKTRIK", "ENERJISA", "CK ENERJI", "AYEDAS", "BEDAS", "IGDAS", "DOGALGAZ", "DOGAL GAZ", "ISKI", "ASKI", "IZSU", "SU IDARESI", "TURKCELL", "VODAFONE", "TURK TELEKOM", "TT MOBIL", "SUPERONLINE", "TURKNET", "D-SMART", "DIGITURK", "FATURA"]],
-  ["Banka masrafı", ["MASRAF", "BSMV", "KART AIDATI", "HESAP ISLETIM", "EFT UCRETI", "HAVALE UCRETI", "KOMISYON"]],
+  ["Faturalar", ["TURK NET", "ELEKTRIK", "ENERJISA", "CK ENERJI", "AYEDAS", "BEDAS", "IGDAS", "DOGALGAZ", "DOGAL GAZ", "ISKI", "ASKI", "IZSU", "SU IDARESI", "TURKCELL", "VODAFONE", "TURK TELEKOM", "TT MOBIL", "SUPERONLINE", "TURKNET", "D-SMART", "DIGITURK", "FATURA"]],
+  ["Banka masrafı", ["MASRAF", "BSMV", "KKDF", "VADE FARKI", "GECIKME", "FAIZ", "KART AIDATI", "HESAP ISLETIM", "EFT UCRETI", "HAVALE UCRETI", "KOMISYON"]],
   ["Lojistik", ["KARGO", "YURTICI", "ARAS ", "MNG", "PTT", "SURAT", "HEPSIJET", "TRENDYOL EXPRESS"]],
-  ["Market / Gıda", ["GIDA", "EKMEK", "UNLU MAMUL", "SUT ", "MANDIRA", "SARKUTERI", "BAKKAL", "TEKEL", "POPEYES", "BURGER KING", "MCDONALDS", "KFC", "DOMINOS", "LITTLE CAESARS", "SUBWAY", "SBARRO", "ARBYS", "USTA DONERCI", "KOFTECI", "BALIK", "TATLI", "BAKLAVA", "MIGROS", "A101", "BIM ", "SOK MARKET", "SOK ", "CARREFOUR", "MACROCENTER", "FILE ", "METRO ", "HAKMAR", "GETIR", "YEMEKSEPETI", "TRENDYOL YEMEK", "TRENDYOL GO", "RESTORAN", "LOKANTA", "CAFE", "KAFE", "STARBUCKS", "KAHVE", "BURGER", "PIZZA", "DONER", "FIRIN", "PASTANE", "SIMIT", "KASAP", "MANAV"]],
-  ["Ulaşım", ["AKARYAKIT", "SHELL", "OPET", "PETROL OFISI", " PO ", "BP ", "TOTAL", "AYTEMIZ", "HGS", "OGS", "ISTANBULKART", "UBER", "BITAKSI", "TAKSI", "OTOPARK", "ISPARK", "MARTI", "THY", "PEGASUS", "AJET", "OTOBUS", "METRO TURIZM", "PAMUKKALE", "KAMIL KOC", "LASTIK", "OTO SERVIS"]],
+  ["Market / Gıda", ["PIDE", "KEBAP", "KAHVALTI", "MUTFAG", "LEZZET", "USTANIN", "DONER", "PIZZA", "DONDURMA", "CEREZ", "KURUYEMIS", " SU ", "LOKANTA", "RESTORAN", "CAFE", "KAFE", "KAHVE", "GIDA", "EKMEK", "UNLU MAMUL", "SUT ", "MANDIRA", "SARKUTERI", "BAKKAL", "TEKEL", "POPEYES", "BURGER KING", "MCDONALDS", "KFC", "DOMINOS", "LITTLE CAESARS", "SUBWAY", "SBARRO", "ARBYS", "USTA DONERCI", "KOFTECI", "BALIK", "TATLI", "BAKLAVA", "MIGROS", "A101", "BIM ", "SOK MARKET", "SOK ", "CARREFOUR", "MACROCENTER", "FILE ", "METRO ", "HAKMAR", "GETIR", "YEMEKSEPETI", "TRENDYOL YEMEK", "TRENDYOL GO", "RESTORAN", "LOKANTA", "CAFE", "KAFE", "STARBUCKS", "KAHVE", "BURGER", "PIZZA", "DONER", "FIRIN", "PASTANE", "SIMIT", "KASAP", "MANAV"]],
+  ["Ulaşım", ["EGO KART", "EGO ", "TCDD", "OBILET", "OTOGAR", "PETROL", "AKARYAKIT", "SHELL", "OPET", "PETROL OFISI", " PO ", "BP ", "TOTAL", "AYTEMIZ", "HGS", "OGS", "ISTANBULKART", "UBER", "BITAKSI", "TAKSI", "OTOPARK", "ISPARK", "MARTI", "THY", "PEGASUS", "AJET", "OTOBUS", "METRO TURIZM", "PAMUKKALE", "KAMIL KOC", "LASTIK", "OTO SERVIS"]],
   ["Giyim", ["LC WAIKIKI", "LCW", "DEFACTO", "KOTON", "ZARA", "H&M", "H M ", "MAVI", "COLINS", "COLIN S", "BOYNER", "FLO ", "INSTREET", "SKECHERS", "NIKE", "ADIDAS", "PUMA", "MANGO", "PULL&BEAR", "PULL AND BEAR", "BERSHKA", "STRADIVARIUS", "US POLO", "U.S. POLO", "NETWORK", "VAKKO", "BEYMEN", "DERIMOD", "PENTI", "SUWEN", "MARKS SPENCER", "LTB", "JACK JONES", "DECATHLON", "SPORTIVE", "AYAKKABI", "GIYIM", "TEKSTIL"]],
-  ["Yapı market / Ev", ["KOCTAS", "BAUHAUS", "IKEA", "TEKZEN", "PRAKTIKER", "ENGLISH HOME", "MADAME COCO", "KARACA", "EVIDEA", "PASABAHCE", "YAPI MARKET", "HIRDAVAT", "BOYA", "MOBILYA", "ISTIKBAL", "BELLONA", "DOGTAS", "ENZA", "CILEK", "KELEBEK"]],
+  ["Yapı market / Ev", ["FAVORAHOME", "HOME ", "YALITIM", "KOCTAS", "BAUHAUS", "IKEA", "TEKZEN", "PRAKTIKER", "ENGLISH HOME", "MADAME COCO", "KARACA", "EVIDEA", "PASABAHCE", "YAPI MARKET", "HIRDAVAT", "BOYA", "MOBILYA", "ISTIKBAL", "BELLONA", "DOGTAS", "ENZA", "CILEK", "KELEBEK"]],
   ["Elektronik", ["MEDIAMARKT", "MEDIA MARKT", "TEKNOSA", "VATAN BILGISAYAR", "APPLE STORE", "SAMSUNG", "XIAOMI", "ARCELIK", "BEKO", "VESTEL", "BOSCH", "ITOPYA"]],
   ["Sağlık", ["ECZANE", "ECZ.", "HASTANE", "HASTANESI", "KLINIK", "POLIKLINIK", "DIS HEKIMI", "TIP MERKEZI", "LABORATUVAR", "OPTIK", "ACIBADEM", "MEDICAL PARK", "MEMORIAL", "LIV HOSPITAL"]],
   ["Kişisel bakım", ["GRATIS", "WATSONS", "ROSSMANN", "EVE SHOP", "SEPHORA", "MAC COSMETICS", "FLORMAR", "KUAFOR", "BERBER", "GUZELLIK"]],
   ["Eğlence / Abonelik", ["NETFLIX", "SPOTIFY", "YOUTUBE", "DISNEY", "EXXEN", "BLUTV", "BLU TV", "AMAZON PRIME", "PRIME VIDEO", "TABII", "GAIN", "SINEMA", "CINEMAXIMUM", "PARIBU CINEMA", "BILETIX", "PASSO", "STEAM", "PLAYSTATION", "XBOX"]],
-  ["Eğitim", ["OKUL", "KOLEJ", "UNIVERSITE", "DERSHANE", "KURS", "UDEMY", "COURSERA", "D&R", "D R ", "KITAP", "KITABEVI", "IDEFIX"]],
+  ["Eğitim", ["SINAV", "OKUL", "KOLEJ", "UNIVERSITE", "DERSHANE", "KURS", "UDEMY", "COURSERA", "D&R", "D R ", "KITAP", "KITABEVI", "IDEFIX"]],
   ["Pazarlama", ["FACEBK", "FACEBOOK", "META ", "GOOGLE ADS", "INSTAGRAM", "TIKTOK ADS", "LINKEDIN"]],
   ["Yazılım", ["GOOGLE", "APPLE.COM", "ITUNES", "MICROSOFT", "ADOBE", "CANVA", "ANTHROPIC", "CLAUDE", "OPENAI", "CHATGPT", "GITHUB", "ZOOM", "NOTION", "DROPBOX"]],
   ["Online alışveriş", ["TRENDYOL", "HEPSIBURADA", "HEPSIBURAD", "HEPSIPAY", "AMAZON", "N11", "CICEKSEPETI", "TEMU", "ALIEXPRESS", "SHEIN", "PTTAVM", "MORHIPO", "IYZICO", "PAYTR"]],
@@ -452,8 +466,8 @@ export function guessCategory(desc, amount, learned) {
 const SUBRULES = [
   ["Elektrik", ["ELEKTRIK", "ENERJISA", "CK ENERJI", "AYEDAS", "BEDAS"]], ["Doğalgaz", ["IGDAS", "DOGALGAZ", "DOGAL GAZ", "BASKENTGAZ", "IZMIRGAZ"]], ["Su", ["ISKI", "ASKI", "IZSU", "SU IDARESI"]],
   ["Telefon", ["TURKCELL", "VODAFONE", "TT MOBIL"]], ["İnternet", ["SUPERONLINE", "TURKNET", "TURK TELEKOM", "TTNET"]],
-  ["Akaryakıt", ["AKARYAKIT", "SHELL", "OPET", "PETROL OFISI", " PO ", "BP ", "TOTAL", "AYTEMIZ"]], ["Otopark / HGS", ["HGS", "OGS", "OTOPARK", "ISPARK"]], ["Toplu taşıma", ["ISTANBULKART", "METRO", "MARMARAY"]], ["Araç bakım", ["LASTIK", "OTO SERVIS"]],
-  ["Restoran / Kafe", ["YEMEKSEPETI", "TRENDYOL YEMEK", "RESTORAN", "LOKANTA", "CAFE", "KAFE", "STARBUCKS", "KAHVE", "BURGER", "PIZZA", "DONER"]], ["Market", ["MIGROS", "A101", "BIM ", "SOK ", "CARREFOUR", "MACROCENTER", "FILE ", "METRO ", "HAKMAR", "GETIR"]],
+  ["Akaryakıt", ["AKARYAKIT", "SHELL", "OPET", "PETROL OFISI", " PO ", "BP ", "TOTAL", "AYTEMIZ"]], ["Otopark / HGS", ["HGS", "OGS", "OTOPARK", "ISPARK"]], ["Toplu taşıma", ["ISTANBULKART", "METRO", "MARMARAY", "EGO ", "TCDD", "OBILET", "OTOGAR"]], ["Araç bakım", ["LASTIK", "OTO SERVIS"]],
+  ["Restoran / Kafe", ["PIDE", "KEBAP", "KAHVALTI", "MUTFAG", "LEZZET", "USTANIN", "DONDURMA", "LOKANTA", "YEMEKSEPETI", "TRENDYOL YEMEK", "RESTORAN", "LOKANTA", "CAFE", "KAFE", "STARBUCKS", "KAHVE", "BURGER", "PIZZA", "DONER"]], ["Market", ["MIGROS", "A101", "BIM ", "SOK ", "CARREFOUR", "MACROCENTER", "FILE ", "METRO ", "HAKMAR", "GETIR"]],
   ["SGK", ["SGK", "BAG-KUR", "BAGKUR"]], ["Vergi", ["VERGI", "GIB ", "GELIR IDARESI", "KDV", "MTV", "STOPAJ"]], ["Kart aidatı", ["KART AIDATI"]], ["EFT / havale", ["EFT UCRETI", "HAVALE UCRETI"]]
 ];
 export function guessSub(desc) { const d = " " + norm(desc) + " "; for (const [s, keys] of SUBRULES) if (keys.some(x => d.includes(x))) return s; return ""; }

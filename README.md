@@ -152,6 +152,9 @@ Hesap eklerken **Para / varlık cinsi** seç: TL, USD, EUR, GBP, CHF, SAR; gram 
 ## Kategoriler ve alt kategoriler
 **Raporlar → Kategoriler** (ya da işlem formundaki "Kategorileri düzenle"): kategori ekle, adını değiştir (eski işlemler de güncellenir), sil; alt kategori ekle (ör. Faturalar → Elektrik). İşlem formunda "＋ Yeni kategori…" ile anında da eklenebilir.
 
+## Veri kontrolü ve "Hesaplar arası"
+Özet'in üstünde sarı bir uyarı çıkarsa **İncele ve düzelt**: hatalı okunmuş tutarlar (iki sütun birleşmiş), kendi hesapların arasındaki para hareketleri (kendine havale, kart borcu ödemesi, ATM, BES katkısı) ve artık tanınabilen "Diğer" kayıtları tek ekranda düzeltilir. **Hesaplar arası** kategorisindeki kayıtlar bakiyeyi etkiler ama gelir/gider analizine ve raporlara girmez.
+
 ## Harcama analizi (Özet)
 Bu ay / geçen ay / son 3 ay için giderler kategoriye göre gruplanır. En yüksek kalem kırmızı, sonrakiler turuncu-amber gösterilir; önceki döneme göre artış/azalış, gelir-gider dengesi, yeni harcama kalemleri ve en çok harcanan yerler için uyarılar üretilir.
 
