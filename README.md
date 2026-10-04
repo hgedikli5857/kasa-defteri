@@ -141,6 +141,9 @@ Bankanın e-postayla gönderdiği ekstreleri indirmeden içe aktarmak için. Uyg
 
 **Kullanım:** Listeden ekstre ekine (PDF/Excel) dokun → hesabı seç → kontrol et → ekle. Aynı bankanın sonraki ekstreleri aynı hesaba önerilir; yüklenenler "✓ yüklendi" olarak işaretlenir. Gmail izni de 1 saat geçerlidir; süresi dolunca yeniden bağlan.
 
+## Hesap gizleme ve toplam dışı bırakma
+Hesabı düzenle → **Toplamlara dahil etme** (net pozisyon, varlıklar ve nakit akışı tahminine girmez) ve/veya **Özet'te gizle**. Bir grubun tamamı için Hesaplar'da grubun altındaki düğmeleri kullan. BES, borsa gibi hemen kullanılamayan birikimler için uygundur; işlemleri ve bakiyesi tutulmaya devam eder. Hesap türlerine **BES / emeklilik** eklendi.
+
 ## Döviz, altın ve gümüş hesapları
 Hesap eklerken **Para / varlık cinsi** seç: TL, USD, EUR, GBP, CHF, SAR; gram altın (24 ayar), 22 ayar bilezik, 18/14 ayar (gr); çeyrek, yarım, tam, cumhuriyet, ata, reşat, gremse (adet); gümüş (gr).
 - Bakiye kendi biriminde tutulur, TL karşılığı canlı kurla (Truncgil Finans, alış fiyatı) hesaplanır. Başlıktaki **Kurlar** düğmesinden kuyumcu fiyatını elle girebilirsin.

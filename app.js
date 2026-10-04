@@ -128,7 +128,10 @@ function balanceOf(a) {
   }
   return b;
 }
-const totalCash = () => sum(S.accounts, a => valueTRY(a));
+// a.excl: toplamlara (net pozisyon, varlıklar) dahil değil · a.hide: Özet'te gösterilmez
+const inTotal = a => !a.excl;
+const totalCash = () => sum(S.accounts.filter(inTotal), a => valueTRY(a));
+const exclTotal = () => sum(S.accounts.filter(a => a.excl), a => valueTRY(a));
 /* --- para birimleri ve kıymetli madenler --- */
 const ASSETS = [
   ["TRY", "Türk lirası", "₺", "Para"], ["USD", "ABD doları", "$", "Para"], ["EUR", "Euro", "€", "Para"], ["GBP", "İngiliz sterlini", "£", "Para"], ["CHF", "İsviçre frangı", "CHF", "Para"], ["SAR", "Suudi riyali", "SAR", "Para"],
@@ -223,9 +226,9 @@ function resolveCat(f, type) {
 
 const accName = a => { const g = groupOf(a); return a.name.toLocaleUpperCase("tr").includes(g.toLocaleUpperCase("tr")) || g === "Nakit" || g === "Diğer hesaplar" ? a.name : `${g} ${a.name}`; };
 /* --- hesap grupları (banka bazında) --- */
-const KINDS = [["nakit", "Nakit (cüzdan / kasa / ev)"], ["banka", "Vadesiz / bankomat"], ["vadeli", "Vadeli mevduat"], ["yatırım", "Yatırım hesabı"], ["kredi kartı", "Kredi kartı"], ["kredi", "Kredi / KMH"], ["birikim", "Birikim / altın / döviz"]];
+const KINDS = [["nakit", "Nakit (cüzdan / kasa / ev)"], ["bes", "BES / emeklilik"], ["banka", "Vadesiz / bankomat"], ["vadeli", "Vadeli mevduat"], ["yatırım", "Yatırım hesabı"], ["kredi kartı", "Kredi kartı"], ["kredi", "Kredi / KMH"], ["birikim", "Birikim / altın / döviz"]];
 const isCash = a => a && a.kind === "nakit";
-const cashTotal = () => sum(S.accounts.filter(isCash), valueTRY);
+const cashTotal = () => sum(S.accounts.filter(a => isCash(a) && inTotal(a)), valueTRY);
 const kindLabel = k => (KINDS.find(x => x[0] === k) || [k, k || "Hesap"])[1].replace(/ \(.*\)$/, "");
 const KNOWN_BANKS = ["Ziraat", "Halkbank", "VakıfBank", "Vakıfbank", "Garanti BBVA", "Garanti", "İş Bankası", "Türkiye İş Bankası", "Yapı Kredi", "Akbank", "QNB", "Finansbank", "Denizbank", "DenizBank", "Enpara", "TEB", "ING", "HSBC", "Şekerbank", "Fibabanka", "Odeabank", "Kuveyt Türk", "Albaraka", "Türkiye Finans", "Ziraat Katılım", "Vakıf Katılım", "Emlak Katılım", "Papara", "Midas", "ininal", "Param", "Burgan", "Alternatif Bank", "Anadolubank", "ICBC", "Colendi", "Hayat Finans"];
 const CANON = { "Garanti": "Garanti BBVA", "Türkiye İş Bankası": "İş Bankası", "Vakıfbank": "VakıfBank", "DenizBank": "Denizbank", "Finansbank": "QNB" };
@@ -238,11 +241,12 @@ const groupOf = a => (a.group && a.group.trim()) || inferGroup(a.name) || (a.kin
 function accountGroups() {
   const m = new Map();
   for (const a of S.accounts) { const g = groupOf(a); if (!m.has(g)) m.set(g, []); m.get(g).push(a); }
-  const order = ["banka", "vadeli", "yatırım", "birikim", "kredi kartı", "kredi", "nakit"];
+  const order = ["banka", "vadeli", "yatırım", "birikim", "bes", "kredi kartı", "kredi", "nakit"];
   const out = [...m.entries()].map(([name, list]) => {
     list.sort((x, y) => order.indexOf(x.kind) - order.indexOf(y.kind) || x.name.localeCompare(y.name, "tr"));
-    const bals = list.map(valueTRY);
-    return { name, list, total: sum(bals, x => x), assets: sum(bals, x => x > 0 ? x : 0), debts: sum(bals, x => x < 0 ? -x : 0) };
+    const bals = list.filter(inTotal).map(valueTRY);
+    return { name, list, total: sum(list, valueTRY), inc: sum(bals, x => x), assets: sum(bals, x => x > 0 ? x : 0), debts: sum(bals, x => x < 0 ? -x : 0),
+      allEx: list.every(a => a.excl), allHide: list.every(a => a.hide), exN: list.filter(a => a.excl).length, hideN: list.filter(a => a.hide).length };
   });
   const rank = g => g.list.every(isCash) ? 0 : g.name === "Diğer hesaplar" ? 2 : 1; // nakit en üstte
   return out.sort((x, y) => rank(x) - rank(y) || y.assets + y.debts - (x.assets + x.debts));
@@ -670,7 +674,8 @@ function viewOzet() {
       <div class="legend"><span><i style="background:var(--pos)"></i>Gelir</span><span><i style="background:var(--neg)"></i>Gider</span></div></div>
       ${monthChart()}</div>
     <div class="panel"><div class="ph"><h2>Hesaplar</h2><button class="btn small" data-act="new-account">+ Hesap</button></div>
-      <div class="list">${accountGroups().map(g => `<div class="dhead" style="padding-top:8px"><span>${esc(g.name)}</span><span class="num ${g.total < 0 ? "neg" : ""}">${money(g.total)}</span></div>` + g.list.map(a => `<div class="row click" data-edit-account="${esc(a.id)}" style="padding-left:12px"><div><div class="t">${esc(a.name)}</div><div class="m">${esc(kindLabel(a.kind))}${accAsset(a) !== "TRY" ? " · " + fmtAsset(balanceOf(a), accAsset(a)) : ""}${limitInfo(a) ? ` · <span style="color:${limitInfo(a).col}">kalan limit ${money0(limitInfo(a).avail)}</span>` : ""}</div></div><div class="amt ${valueTRY(a) < 0 ? "neg" : ""}">${money(valueTRY(a))}</div></div>`).join("")).join("") || `<p class="muted">Henüz hesap yok.</p>`}</div></div>
+      <div class="list">${accountGroups().filter(g => !g.allHide).map(g => `<div class="dhead" style="padding-top:8px"><span>${esc(g.name)}${g.allEx ? ` <span class="pill">toplam dışı</span>` : ""}</span><span class="num ${g.total < 0 ? "neg" : ""} ${g.allEx ? "muted" : ""}">${money(g.total)}</span></div>` + g.list.filter(a => !a.hide).map(a => `<div class="row click" data-edit-account="${esc(a.id)}" style="padding-left:12px"><div><div class="t">${esc(a.name)}</div><div class="m">${esc(kindLabel(a.kind))}${accAsset(a) !== "TRY" ? " · " + fmtAsset(balanceOf(a), accAsset(a)) : ""}${limitInfo(a) ? ` · <span style="color:${limitInfo(a).col}">kalan limit ${money0(limitInfo(a).avail)}</span>` : ""}</div></div><div class="amt ${valueTRY(a) < 0 ? "neg" : ""} ${a.excl ? "muted" : ""}">${money(valueTRY(a))}</div></div>`).join("")).join("") || `<p class="muted">Henüz hesap yok.</p>`}
+        ${S.accounts.some(a => a.hide) ? `<p class="small-note" style="margin:8px 0 0">${S.accounts.filter(a => a.hide).length} hesap gizli · göstermek için <button class="btn ghost small" data-tab="hesaplar" style="padding:0;display:inline">Hesaplar</button>'dan hesaba dokun.</p>` : ""}</div></div>
   </section>`;
 }
 function planRow(p) {
@@ -782,6 +787,7 @@ function viewHesaplar() {
       <div class="kpi" style="padding:4px 0"><div class="lbl">Varlıklar</div><div class="val pos">${money(assets)}</div></div>
       <div class="kpi" style="padding:4px 0"><div class="lbl">Borçlar (kart, kredi)</div><div class="val neg">${money(debts)}</div></div>
       <div class="kpi" style="padding:4px 0"><div class="lbl">Net</div><div class="val ${total < 0 ? "neg" : ""}">${money(total)}</div></div>
+      ${S.accounts.some(a => a.excl) ? `<div class="kpi" style="padding:4px 0"><div class="lbl">Toplam dışı (BES, yatırım…)</div><div class="val muted">${money(exclTotal())}</div><div class="sub">${S.accounts.filter(a => a.excl).length} hesap · dahil: ${money0(total + exclTotal())}</div></div>` : ""}
     </div></section>
   ${!S.accounts.some(isCash) ? `<button class="acard" type="button" data-act="new-cash" style="text-align:left;border-style:dashed"><b>+ Nakit hesabı ekle</b><span class="muted" style="font-size:.85rem">Cüzdan, kasa, evde duran döviz veya altın. Bankaya yatırmadığın parayı da takip et.</span></button>` : ""}
   ${gs.map(g => {
@@ -789,13 +795,16 @@ function viewHesaplar() {
     return `<section class="panel"><div class="ph" style="margin-bottom:${open ? 12 : 0}px">
       <button type="button" class="btn ghost" data-toggle-group="${esc(g.name)}" style="padding:0;gap:10px;min-width:0" aria-expanded="${open}">
         <span class="mark" style="width:30px;height:30px;font-size:13px;flex:none">${esc(g.name.slice(0, 1).toLocaleUpperCase("tr"))}</span>
-        <span style="text-align:left;min-width:0"><b style="font-size:1.02rem">${esc(g.name)}</b><br><span class="muted" style="font-size:.8rem;font-weight:400">${g.list.length} hesap${g.assets ? ` · varlıkların %${share}'i` : ""}</span></span>
+        <span style="text-align:left;min-width:0"><b style="font-size:1.02rem">${esc(g.name)}</b><br><span class="muted" style="font-size:.8rem;font-weight:400">${g.list.length} hesap${g.assets ? ` · varlıkların %${share}'i` : ""}${g.allEx ? " · toplam dışı" : g.exN ? ` · ${g.exN} hesap toplam dışı` : ""}${g.allHide ? " · Özet'te gizli" : ""}</span></span>
         <span class="muted" aria-hidden="true">${open ? "▾" : "▸"}</span></button>
       <div style="text-align:right"><div class="num ${g.total < 0 ? "neg" : ""}" style="font-size:1.1rem;font-weight:500">${money(g.total)}</div>
         <div class="muted" style="font-size:.78rem">${g.debts ? `<span class="pos">+${money0(g.assets)}</span> · <span class="neg">−${money0(g.debts)}</span>` : "net"}</div></div></div>
       ${open ? `<div class="cards">${g.list.map(accCard).join("")}
         <button class="acard" type="button" data-new-in-group="${esc(g.name)}" style="place-content:center;text-align:center;border-style:dashed;color:var(--muted);min-height:90px">+ ${esc(g.name)} için hesap ekle</button></div>
-        <div style="display:flex;justify-content:flex-end;margin-top:8px"><button class="btn small ghost" data-rename-group="${esc(g.name)}">Grup adını değiştir</button></div>` : ""}
+        <div style="display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap;margin-top:8px">
+          <button class="btn small ghost" data-group-excl="${esc(g.name)}">${g.allEx ? "Toplamlara dahil et" : "Toplamlara dahil etme"}</button>
+          <button class="btn small ghost" data-group-hide="${esc(g.name)}">${g.allHide ? "Özet'te göster" : "Özet'te gizle"}</button>
+          <button class="btn small ghost" data-rename-group="${esc(g.name)}">Grup adını değiştir</button></div>` : ""}
     </section>`;
   }).join("") || `<section class="panel"><p class="muted">Henüz hesap yok.</p></section>`}`;
 }
@@ -862,14 +871,15 @@ function instListHtml(a) {
     <div class="small-note" style="margin:0">Toplam kalan taksit: <b>${money(sum(list, x => x.rest))}</b>. Limitten alışveriş anında tamamı düşer; her ay ekstreye bir taksit yansır.</div></div>`;
 }
 function creditCardsPanel() {
-  const cards = S.accounts.filter(a => limitInfo(a)); if (!cards.length) return "";
+  const cards = S.accounts.filter(a => limitInfo(a) && !a.hide); if (!cards.length) return "";
   return `<section class="panel"><div class="ph"><div><h2>Kredi kartlarım</h2><p>Kalan limit ve bu dönemki harcama</p></div></div>
     <div class="grid g-2" style="gap:10px">${cards.map(a => `<button class="acard" data-edit-account="${esc(a.id)}" type="button"><b>${esc((a.group ? a.group + " · " : "") + a.name)}</b>${cardSummaryHtml(a)}</button>`).join("")}</div></section>`;
 }
 function accCard(a) {
   const b = balanceOf(a), tx = S.txns.filter(t => t.accountId === a.id || t.toAccountId === a.id), last = tx.reduce((m, t) => t.date > m ? t.date : m, "");
-  return `<button class="acard" data-edit-account="${esc(a.id)}" type="button"><div style="display:flex;justify-content:space-between;gap:8px;align-items:start"><b>${esc(a.name)}</b><span class="pill ${a.kind === "kredi kartı" || a.kind === "kredi" ? "neg" : a.kind === "yatırım" || a.kind === "vadeli" || a.kind === "birikim" ? "pos" : "acc"}">${esc(kindLabel(a.kind))}</span></div>
-    <div class="bal ${b < 0 ? "neg" : ""}">${fmtAsset(b, accAsset(a))}</div>
+  return `<button class="acard" data-edit-account="${esc(a.id)}" type="button"><div style="display:flex;justify-content:space-between;gap:8px;align-items:start"><b>${esc(a.name)}</b><span class="pill ${a.kind === "kredi kartı" || a.kind === "kredi" ? "neg" : a.kind === "yatırım" || a.kind === "vadeli" || a.kind === "birikim" || a.kind === "bes" ? "pos" : "acc"}">${esc(kindLabel(a.kind))}</span></div>
+    <div class="bal ${b < 0 ? "neg" : ""}" ${a.excl ? 'style="opacity:.6"' : ""}>${fmtAsset(b, accAsset(a))}</div>
+    ${a.excl || a.hide ? `<div style="display:flex;gap:6px;flex-wrap:wrap">${a.excl ? `<span class="pill">toplam dışı</span>` : ""}${a.hide ? `<span class="pill">Özet'te gizli</span>` : ""}</div>` : ""}
     ${accAsset(a) !== "TRY" ? `<div class="muted" style="font-size:.82rem">≈ ${money(valueTRY(a))} · ${esc(assetOf(accAsset(a))[1])}</div>` : ""}
     ${limitInfo(a) ? cardSummaryHtml(a) : isCredit(a) ? `<div class="muted" style="font-size:.78rem">Limit girilmedi · düzenlemek için dokun</div>` : ""}
     <div class="muted" style="font-size:.82rem">${tx.length} işlem${last ? ` · son ${dshort(last)}` : ""}</div></button>`;
@@ -1061,6 +1071,10 @@ function accountForm(a) {
       <p class="small-note" style="margin:0" id="f-avail-hint">Kalan limiti bankanın uygulamasından bakıp yazarsan, borç buna göre eşitlenir. Ekstreden gelen tutarlarla oluşan farklar böylece düzelir.</p>
     </div>
     ${a && isCredit(a) ? instListHtml(a) : ""}
+    <div style="display:grid;gap:6px;border:1px solid var(--line);border-radius:10px;padding:10px 12px">
+      <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="f-excl" style="width:auto" ${a?.excl ? "checked" : ""}> Toplamlara dahil etme <span class="muted" style="font-size:.82rem">(net pozisyon, varlıklar, nakit akışı)</span></label>
+      <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="f-hide" style="width:auto" ${a?.hide ? "checked" : ""}> Özet'te gizle <span class="muted" style="font-size:.82rem">(Hesaplar'da görünmeye devam eder)</span></label>
+      <p class="small-note" style="margin:0">BES, borsa, emeklilik gibi hemen kullanamayacağın birikimler için uygun. İşlemleri ve bakiyesi tutulmaya devam eder.</p></div>
     <label><span id="f-open-lbl">Açılış bakiyesi (${amtUnit(a || { asset: "TRY" })})</span><input id="f-open" inputmode="decimal" value="${amtStr(a?.opening) || "0"}"></label>
     <p id="f-open-conv" class="small-note" style="margin:0"></p>
     <p class="muted" style="margin:0;font-size:.82rem">Aynı bankadaki hesaplar (bankomat, yatırım, kredi kartı) aynı grupta toplanır. Kredi kartı ve kredi borcunu eksi bakiye olarak gir (örn. -4500).</p>
@@ -1782,7 +1796,7 @@ function submitForm(f) {
     imp = { accountId: accId, gmailKey: P.key }; ui.gmailPending = null; closeSheet(); readStatement(P.file); return;
   } else if (kind === "account") {
     const limit = parseAmt(v("#f-limit")), avail = parseAmt(v("#f-avail"));
-    const o = { id: id || uid8(), name: v("#f-name"), group: v("#f-group") || inferGroup(v("#f-name")) || (v("#f-kind") === "nakit" ? "Nakit" : ""), kind: v("#f-kind"), asset: v("#f-asset") || "TRY", opening: parseAmt(v("#f-open")) || 0 };
+    const o = { id: id || uid8(), excl: !!$("#f-excl")?.checked, hide: !!$("#f-hide")?.checked, name: v("#f-name"), group: v("#f-group") || inferGroup(v("#f-name")) || (v("#f-kind") === "nakit" ? "Nakit" : ""), kind: v("#f-kind"), asset: v("#f-asset") || "TRY", opening: parseAmt(v("#f-open")) || 0 };
     if (isCredit(o)) {
       const old = old0(o.id) || {};
       o.limit = limit > 0 ? limit : 0;
@@ -1864,6 +1878,13 @@ document.addEventListener("click", async e => {
   if (d.toggleGroup) { let c = {}; try { c = JSON.parse(ls.get("kd-collapsed") || "{}"); } catch (e) { } c[d.toggleGroup] = !c[d.toggleGroup]; ls.set("kd-collapsed", JSON.stringify(c)); return render(); }
   if (d.newInGroup) { ui.newGroup = d.newInGroup; const gl = accountGroups().find(g => g.name === d.newInGroup); if (gl && gl.list.every(isCash)) ui.newKind = "nakit"; return accountForm(); }
   if (d.renameGroup) return renameGroup(d.renameGroup);
+  if (d.groupExcl != null || d.groupHide != null) {
+    const name = d.groupExcl ?? d.groupHide, k = d.groupExcl != null ? "excl" : "hide", g = accountGroups().find(x => x.name === name); if (!g) return;
+    const val = k === "excl" ? !g.allEx : !g.allHide;
+    const ops = g.list.map(a => { const { id, ...dd } = { ...a, [k]: val }; return { type: "set", col: "accounts", id, data: clean(dd) }; });
+    if (live()) { if (!(await safe(() => batchWrite(ops)))) return; Drive.dirty(); } else { g.list.forEach(a => { a[k] = val; }); saveDemo(); render(); }
+    toast(k === "excl" ? (val ? `${name}: toplamlara dahil edilmiyor` : `${name}: toplamlara dahil`) : (val ? `${name}: Özet'te gizlendi` : `${name}: Özet'te gösteriliyor`)); return;
+  }
   if (d.gmailMsg) return gmailOpen(d.gmailMsg, d.gmailAtt, d.gmailName);
   if (d.planFor) { planForm({ contactId: d.planFor, dir: "tahsilat" }); return; }
   if (el.id === "addBtn") return newMenu();
