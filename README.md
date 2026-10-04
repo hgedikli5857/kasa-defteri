@@ -125,6 +125,12 @@ Banka hareketlerini tek tek yazmak yerine:
 Kart hesabını düzenle (veya ekstre içe aktarırken) şu dört alanı bankanın uygulamasından bakarak doldur: **Toplam limit**, **Kullanılabilir limit**, **Dönem içi harcamalar**, **Hesap kesim günü**.
 Özet ve Hesaplar ekranında banka uygulamasındaki gibi görünür: kullanılabilir limit, dönem içi harcamalar, toplam borç, önceki dönem/taksit farkı ve dönem tarihleri. Sonra eklediğin harcamalar iki rakama da otomatik yansır; kesim gününde dönem harcaması sıfırlanır.
 
+## Kredi kartı taksitleri
+- **Elle:** Gider eklerken hesap olarak kredi kartını seç → **Taksit** (2–36) seç. Alışveriş toplam tutarla bir kez kaydedilir; limitten tamamı düşer.
+- **Ekstreden:** "TAKSİT 2/6", "2/6 TAKSİT", "409,90 TL'LİK İŞLEMİN 2/2 TAKSİTİ" gibi satırlar tek bir taksitli alışverişe çevrilir; sonraki ekstrelerdeki taksitleri "alışveriş zaten kayıtlı" olarak atlanır.
+- **Kart özeti:** Dönem içi harcamalara yalnızca o ayın taksiti girer; kalanlar "Gelecek dönem taksitleri" satırında görünür. Kartı düzenle ekranında **Devam eden taksitler** listesi vardır.
+- **Harcama analizi** ve aylık grafik taksitleri aylara böler.
+
 ## Gmail'den ekstre (isteğe bağlı)
 Bankanın e-postayla gönderdiği ekstreleri indirmeden içe aktarmak için. Uygulama Gmail'i **sadece okur** (`gmail.readonly`).
 

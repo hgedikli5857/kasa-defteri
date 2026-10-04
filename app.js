@@ -18,6 +18,21 @@ const pd = s => { const [y, m, d] = String(s).split("-").map(Number); return new
 const addDays = (s, n) => { const d = pd(s); d.setDate(d.getDate() + n); return iso(d); };
 const addMonths = (s, n) => { const d = pd(s), day = d.getDate(); const t = new Date(d.getFullYear(), d.getMonth() + n, 1); const last = new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate(); t.setDate(Math.min(day, last)); return iso(t); };
 const diffDays = (a, b) => Math.round((pd(b) - pd(a)) / 864e5);
+/* --- taksit: alışveriş bir kez (toplam tutar) kaydedilir; analiz ve dönem hesabı aylara böler --- */
+const instN = t => t && t.type === "gider" && +t.inst > 1 ? +t.inst : 0;
+function instPieces(t) {
+  const n = instN(t); if (!n) return [t];
+  const per = Math.round(t.amount / n * 100) / 100;
+  return Array.from({ length: n }, (_, i) => ({ ...t, amount: i === n - 1 ? Math.round((t.amount - per * (n - 1)) * 100) / 100 : per, date: addMonths(t.date, i), instK: i + 1, instOf: t.id }));
+}
+const spreadTx = list => list.flatMap(instPieces);
+const INST_OPTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 18, 24, 36];
+function instInfo(d) { // ekstre satırı: "2/6 TAKSİT", "TAKSİT 2/6", "409,90 TL'LİK İŞLEMİN 2/2 TAKSİTİ"
+  const U = String(d || "").toLocaleUpperCase("tr");
+  const m = U.match(/(\d{1,2})\s*\/\s*(\d{1,2})\s*\.?\s*TAKS/) || U.match(/TAKS[İI]T\S*\s*:?\s*(?:NO\s*:?\s*)?(\d{1,2})\s*\/\s*(\d{1,2})/);
+  if (!m) return null; const k = +m[1], n = +m[2]; if (!(n > 1 && n <= 48 && k >= 1 && k <= n)) return null;
+  const tm = U.match(/([\d.]+,\d{2})\s*TL['’]?\s*L[İI]K/); return { k, n, total: tm ? IMP.parseAmount(tm[1]) : null };
+}
 let TODAY = iso(new Date());
 const nf = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const nf0 = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", maximumFractionDigits: 0 });
@@ -682,7 +697,8 @@ function projChart(pr) {
 const monthKey = s => s.slice(0, 7);
 function lastMonths(n) { const out = [], d = pd(TODAY); for (let i = n - 1; i >= 0; i--) out.push(iso(new Date(d.getFullYear(), d.getMonth() - i, 1)).slice(0, 7)); return out; }
 function monthChart() {
-  const data = lastMonths(6).map(m => ({ m, inc: sum(S.txns.filter(t => t.type === "gelir" && monthKey(t.date) === m), txTRY), exp: sum(S.txns.filter(t => t.type === "gider" && monthKey(t.date) === m), txTRY) }));
+  const TX = spreadTx(S.txns);
+  const data = lastMonths(6).map(m => ({ m, inc: sum(TX.filter(t => t.type === "gelir" && monthKey(t.date) === m), txTRY), exp: sum(TX.filter(t => t.type === "gider" && monthKey(t.date) === m), txTRY) }));
   const W = 640, H = 220, L = 50, R = 8, T = 12, B = 28, mx = Math.max(1, ...data.map(x => Math.max(x.inc, x.exp)));
   const step = niceStep(mx / 4), top = Math.ceil(mx / step) * step, Y = v => T + (top - v) * (H - T - B) / top, bw = (W - L - R) / data.length;
   let g = ""; for (let v = 0; v <= top + 1e-6; v += step) g += `<line x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)" ${v ? 'stroke-dasharray="2 4"' : ""}/><text x="${L - 8}" y="${Y(v) + 4}" text-anchor="end">${cf.format(v)}</text>`;
@@ -715,7 +731,7 @@ function viewIslemler() {
     }
     const a = acc(t.accountId), sg = t.type === "gelir" ? 1 : t.type === "gider" ? -1 : 0;
     h += `<div class="row click" data-edit-txn="${esc(t.id)}"><div><div class="t">${esc(txLabel(t))}</div>
-      <div class="m">${dshort(t.date)} · ${esc(catLabel(t))}${t.type !== "transfer" && a ? " · " + esc(accName(a)) : ""}${t.note && con(t.contactId) ? " · " + esc(t.note) : ""}</div></div>
+      <div class="m">${dshort(t.date)} · ${esc(catLabel(t))}${instN(t) ? ` · <span class="pill acc">${instN(t)} taksit · aylık ${money0(t.amount / instN(t))}</span>` : ""}${t.type !== "transfer" && a ? " · " + esc(accName(a)) : ""}${t.note && con(t.contactId) ? " · " + esc(t.note) : ""}</div></div>
       <div class="amt ${sg > 0 ? "pos" : sg < 0 ? "neg" : "muted"}">${sg > 0 ? "+" : sg < 0 ? "−" : "⇄ "}${fmtAsset(t.amount, txAsset(t))}${t.type === "transfer" && t.toAmount != null && accAsset(acc(t.toAccountId)) !== txAsset(t) ? `<div class="muted" style="font-size:.78rem">→ ${fmtAsset(t.toAmount, accAsset(acc(t.toAccountId)))}</div>` : txAsset(t) !== "TRY" && t.type !== "transfer" ? `<div class="muted" style="font-size:.78rem">≈ ${money(txTRY(t))}</div>` : ""}</div></div>`;
   }
   return `<section class="panel"><div class="ph"><div><h2>İşlemler</h2><p>${rows.length} kayıt · <span class="pos">${money(inc)}</span> gelir · <span class="neg">${money(exp)}</span> gider</p></div>
@@ -797,14 +813,19 @@ function cardSummary(a) {
   const day = +a.cutDay > 0 ? Math.min(31, +a.cutDay) : 0, cut = day ? lastCut(day) : null;
   const start = cut ? addDays(cut, 1) : TODAY.slice(0, 8) + "01";
   const nextCut = cut ? (() => { const d = pd(cut); return cutOn(d.getFullYear(), d.getMonth() + 1, day); })() : null;
+  const end = nextCut || (() => { const d = pd(TODAY); return iso(new Date(d.getFullYear(), d.getMonth() + 1, 0)); })();
   const own = S.txns.filter(t => t.accountId === a.id && t.type === "gider");
+  const inPer = p => p.date >= start && p.date <= end && (p.instOf || p.date <= TODAY);
   let spent, synced = false;
   if (a.syncSpent != null && a.spentDate && a.spentDate >= start) {
     const skip = new Set(a.spentIds || []); synced = true;
-    spent = +a.syncSpent + sum(own.filter(t => t.date <= TODAY && (t.date > a.spentDate || (t.date === a.spentDate && !skip.has(t.id) && !t.importKey))), t => +t.amount);
-  } else spent = sum(own.filter(t => t.date >= start && t.date <= TODAY), t => +t.amount);
+    const after = own.filter(t => t.date <= TODAY && (t.date > a.spentDate || (t.date === a.spentDate && !skip.has(t.id) && !t.importKey)));
+    spent = +a.syncSpent + sum(spreadTx(after).filter(inPer), p => +p.amount);
+  } else spent = sum(spreadTx(own).filter(inPer), p => +p.amount);
   spent = Math.round(spent * 100) / 100;
-  return { ...L, spent, prev: Math.max(0, Math.round((L.used - spent) * 100) / 100), start, cut, nextCut, synced };
+  const fut = spreadTx(own.filter(instN)).filter(p => p.date > end), future = Math.round(sum(fut, p => +p.amount) * 100) / 100;
+  const instAct = own.filter(t => instN(t) && addMonths(t.date, instN(t) - 1) > end).length;
+  return { ...L, spent, future, instAct, prev: Math.max(0, Math.round((L.used - spent - future) * 100) / 100), start, cut, nextCut, end, synced };
 }
 function cardSummaryHtml(a) {
   const C = cardSummary(a); if (!C) return "";
@@ -814,13 +835,26 @@ function cardSummaryHtml(a) {
     <div style="height:8px;background:var(--surface-2);border-radius:4px;overflow:hidden"><div style="width:${(C.pct * 100).toFixed(1)}%;height:100%;background:${C.col}"></div></div>
     <div class="csum-rows">
       <span>Toplam borç</span><b class="num">${money(C.used)}</b>
-      ${C.prev >= 0.01 ? `<span>Önceki dönem / taksit</span><b class="num">${money(C.prev)}</b>` : ""}
+      ${C.future >= 0.01 ? `<span>Gelecek dönem taksitleri${C.instAct ? ` (${C.instAct} alışveriş)` : ""}</span><b class="num">${money(C.future)}</b>` : ""}
+      ${C.prev >= 0.01 ? `<span>${C.future >= 0.01 ? "Önceki dönem borcu" : "Önceki dönem / taksit"}</span><b class="num">${money(C.prev)}</b>` : ""}
       <span>Toplam limit</span><b class="num">${money(C.lim)}</b>
       <span>Dönem</span><b>${dshort(C.start)} – ${C.nextCut ? dshort(C.nextCut) + " (kesim)" : "bugün"}</b>
     </div>
     ${C.pct >= 0.8 ? `<div class="neg" style="font-size:.78rem">Limitin %${Math.round(C.pct * 100)} kadarı dolu</div>` : ""}
     ${!a.cutDay ? `<div class="muted" style="font-size:.74rem">Hesap kesim günü girilmedi; dönem ay başından sayılıyor.</div>` : ""}
     ${a.limitSyncAt ? `<div class="muted" style="font-size:.74rem">Bankayla eşitlendi: ${tfmt.format(new Date(a.limitSyncAt))}</div>` : ""}</div>`;
+}
+function instListHtml(a) {
+  const C = cardSummary(a), end = C ? C.end : TODAY;
+  const list = S.txns.filter(t => t.accountId === a.id && instN(t)).map(t => {
+    const n = instN(t), ps = instPieces(t), k = ps.filter(p => p.date <= end).length, rest = sum(ps.filter(p => p.date > end), p => p.amount);
+    return { t, n, k: Math.min(k, n), per: ps[0].amount, rest, done: k >= n };
+  }).filter(x => !x.done).sort((x, y) => y.rest - x.rest);
+  if (!list.length) return "";
+  return `<div style="display:grid;gap:6px;border:1px solid var(--line);border-radius:10px;padding:12px">
+    <b style="font-size:.92rem">Devam eden taksitler</b>
+    ${list.map(x => `<div style="display:flex;justify-content:space-between;gap:10px;font-size:.86rem"><span style="min-width:0"><b>${esc(x.t.note || catLabel(x.t))}</b><br><span class="muted">${dshort(x.t.date)} · ${money(x.t.amount)} · ${x.k}/${x.n}. taksit · aylık ${money(x.per)}</span></span><span class="num" style="text-align:right">kalan<br><b>${money(x.rest)}</b></span></div>`).join("")}
+    <div class="small-note" style="margin:0">Toplam kalan taksit: <b>${money(sum(list, x => x.rest))}</b>. Limitten alışveriş anında tamamı düşer; her ay ekstreye bir taksit yansır.</div></div>`;
 }
 function creditCardsPanel() {
   const cards = S.accounts.filter(a => limitInfo(a)); if (!cards.length) return "";
@@ -956,6 +990,7 @@ function txnForm(t, presetType) {
     ${type === "transfer" ? `<label>Tarih<input id="f-date" type="date" required value="${esc(t?.date || TODAY)}"></label>` : `<label id="f-rate-row" hidden><span id="f-rate-lbl">Kur</span><input id="f-rate" inputmode="decimal" value="${t?.rate ? amtStr(t.rate) : ""}"></label>`}</div>
     ${type === "transfer" ? `<label id="f-toamt-row" hidden><span id="f-toamt-lbl">Giriş miktarı</span><input id="f-toamt" inputmode="decimal" value="${t?.toAmount != null ? amtStr(t.toAmount) : ""}"></label>` : ""}
     <p id="f-conv" class="small-note" style="margin:0" hidden></p>
+    ${type === "gider" ? `<label id="f-inst-row" hidden>Taksit<select id="f-inst">${INST_OPTS.map(n => `<option value="${n}" ${n === (+t?.inst || 1) ? "selected" : ""}>${n === 1 ? "Peşin (tek çekim)" : n + " taksit"}</option>`).join("")}</select></label><p id="f-inst-note" class="small-note" style="margin:0" hidden></p>` : ""}
     ${type !== "transfer" ? catFields(type, t?.category, t?.sub) + `<label>Cari<select id="f-con">${conOpts(t?.contactId || "")}</select></label>` : ""}
     <label>Not<input id="f-note" value="${esc(t?.note || "")}" placeholder="İsteğe bağlı"></label>
     ${type !== "transfer" ? `<button type="button" class="btn ghost small" data-act="cats" style="justify-self:start;padding-left:0">Kategorileri düzenle</button>` : ""}
@@ -968,6 +1003,11 @@ function updateTxnUnits() {
   $("#f-amt-lbl").textContent = `Tutar (${amtUnit(a)})`;
   const amt = parseAmt($("#f-amount").value), conv = $("#f-conv");
   conv.hidden = true;
+  if ($("#f-inst-row")) {
+    const show = type === "gider" && isCredit(a), n = +$("#f-inst").value || 1; $("#f-inst-row").hidden = !show;
+    const note = $("#f-inst-note"); note.hidden = !(show && n > 1);
+    if (show && n > 1) note.textContent = `Aylık ${amt > 0 ? money(amt / n) : "—"} × ${n} ay. Kart limitinden tamamı (${amt > 0 ? money(amt) : "toplam"}) şimdi düşer; harcama analizi ve dönem içi harcamalar her aya bir taksit yazar.`;
+  }
   if (type !== "transfer") {
     const row = $("#f-rate-row"); row.hidden = code === "TRY";
     if (code !== "TRY") {
@@ -1015,6 +1055,7 @@ function accountForm(a) {
       <label>Hesap kesim günü<input id="f-cut" inputmode="numeric" value="${a && a.cutDay ? a.cutDay : ""}" placeholder="Ayın kaçı? Örn. 15"></label></div>
       <p class="small-note" style="margin:0" id="f-avail-hint">Kalan limiti bankanın uygulamasından bakıp yazarsan, borç buna göre eşitlenir. Ekstreden gelen tutarlarla oluşan farklar böylece düzelir.</p>
     </div>
+    ${a && isCredit(a) ? instListHtml(a) : ""}
     <label><span id="f-open-lbl">Açılış bakiyesi (${amtUnit(a || { asset: "TRY" })})</span><input id="f-open" inputmode="decimal" value="${amtStr(a?.opening) || "0"}"></label>
     <p id="f-open-conv" class="small-note" style="margin:0"></p>
     <p class="muted" style="margin:0;font-size:.82rem">Aynı bankadaki hesaplar (bankomat, yatırım, kredi kartı) aynı grupta toplanır. Kredi kartı ve kredi borcunu eksi bakiye olarak gir (örn. -4500).</p>
@@ -1064,11 +1105,12 @@ function analysisRange(k) {
 }
 function spendingAnalysis() {
   // ayın ilk günlerinde (az harcama varken) varsayılan olarak geçen ayı göster
-  const thisMonthN = S.txns.filter(t => t.type === "gider" && t.date >= TODAY.slice(0, 8) + "01").length;
+  const TX = spreadTx(S.txns); // taksitli alışverişler aylara bölünür
+  const thisMonthN = TX.filter(t => t.type === "gider" && t.date >= TODAY.slice(0, 8) + "01" && t.date <= TODAY).length;
   const per = ui.anPeriod || (thisMonthN < 5 && pd(TODAY).getDate() < 10 ? "gecen-ay" : "bu-ay"), R = analysisRange(per);
   const inR = (t, a, b) => t.date >= a && t.date <= b;
-  const exp = S.txns.filter(t => t.type === "gider" && inR(t, R.a, R.b)), inc = S.txns.filter(t => t.type === "gelir" && inR(t, R.a, R.b));
-  const prev = S.txns.filter(t => t.type === "gider" && inR(t, R.pa, R.pb));
+  const exp = TX.filter(t => t.type === "gider" && inR(t, R.a, R.b)), inc = TX.filter(t => t.type === "gelir" && inR(t, R.a, R.b));
+  const prev = TX.filter(t => t.type === "gider" && inR(t, R.pa, R.pb));
   const E = sum(exp, txTRY), I = sum(inc, txTRY), PE = sum(prev, txTRY) * R.f;
   const by = {}, pby = {};
   exp.forEach(t => { const k = t.category || "Diğer gider"; (by[k] = by[k] || { v: 0, n: 0, s: {} }); by[k].v += txTRY(t); by[k].n++; if (t.sub) by[k].s[t.sub] = (by[k].s[t.sub] || 0) + txTRY(t); });
@@ -1417,6 +1459,7 @@ function buildImpItems() {
   const keys = new Set(S.txns.map(t => t.importKey).filter(Boolean));
   const occ = {};
   const contacts = S.contacts.filter(c => c.name && c.name.length >= 4).map(c => ({ id: c.id, n: IMP.up(c.name) }));
+  const seenInst = [], acNow = imp.accountId;
   imp.items = ext.map(x => {
     const base = `${imp.accountId}|${x.date}|${x.amount}|${IMP.learnKey(x.desc)}`;
     occ[base] = (occ[base] || 0) + 1;
@@ -1434,7 +1477,20 @@ function buildImpItems() {
     let cat = IMP.guessCategory(x.desc, x.amount, learned);
     if (ct && /^Diğer/.test(cat) && byContact[ct.id + "|" + type]) cat = byContact[ct.id + "|" + type];
     if (!cat.includes("|")) { const sg = IMP.guessSub(x.desc); if (sg && subsOf(type, cat).includes(sg)) cat += "|" + sg; }
-    return { ...x, key, type, amt, dup: exact ? "var" : maybe ? "olası" : "", sel: !exact && !maybe, cat, contactId: ct ? ct.id : "" };
+    const item = { ...x, key, type, amt, dup: exact ? "var" : maybe ? "olası" : "", sel: !exact && !maybe, cat, contactId: ct ? ct.id : "" };
+    const ii = isCard && type === "gider" && !exact ? instInfo(x.desc) : null;
+    if (ii) { // ekstredeki taksit satırı → tek bir taksitli alışveriş
+      const per = amt, buy = addMonths(x.date, -(ii.k - 1)), near = d => Math.abs(diffDays(d, buy)) <= 45;
+      const legacy = S.txns.some(t => t.accountId === acNow && !instN(t) && t.type === "gider" && Math.abs(t.amount - per) < 0.01 && (instInfo(t.note) || {}).n === ii.n);
+      if (legacy) return { ...item, instPart: ii };
+      const have = S.txns.find(t => t.accountId === acNow && instN(t) === ii.n && Math.abs(t.amount / ii.n - per) < 1.01 && near(t.date)) || seenInst.find(s => s.n === ii.n && Math.abs(s.per - per) < 1.01 && near(s.date));
+      if (have) return { ...item, dup: "taksit", sel: false, instPart: ii };
+      const total = ii.total && Math.abs(ii.total / ii.n - per) < 1.01 ? ii.total : Math.round(per * ii.n * 100) / 100;
+      seenInst.push({ n: ii.n, per, date: buy });
+      const clean = x.desc.replace(/\s*[\d.]+,\d{2}\s*TL['’]?\s*L[İIiı]K\s+İŞLEM.*$/i, "").replace(/\s*TAKS[İIiı]T\S*\s*:?\s*\d{1,2}\s*\/\s*\d{1,2}|\s*\d{1,2}\s*\/\s*\d{1,2}\s*\.?\s*TAKS\S*/gi, "").trim() || x.desc;
+      return { ...item, desc: clean, amount: -total, amt: total, date: buy, inst: ii.n, instPart: ii, instPer: per };
+    }
+    return item;
   });
 }
 function impBalanceInfo() {
@@ -1492,7 +1548,7 @@ function renderImport() {
       ${items.slice(0, 600).map((x, i) => `<div class="row" style="grid-template-columns:auto minmax(0,1fr) auto;opacity:${x.sel ? 1 : .55}">
         <input type="checkbox" class="imp-sel" data-i="${i}" ${x.sel ? "checked" : ""} style="width:auto" aria-label="Seç">
         <div style="min-width:0"><div class="t" style="font-size:.9rem;font-weight:500">${esc(x.desc || "(açıklama yok)")}</div>
-          <div class="m">${dshort(x.date)}${x.dup ? ` · <span style="color:var(--warn)">${x.dup === "var" ? "zaten eklendi" : x.dup === "kart" ? "kart ödemesi: gelir değil, bankadan karta transfer olarak gir" : "olası tekrar"}</span>` : ""}${x.contactId ? ` · ${esc(con(x.contactId)?.name || "")}` : ""}</div>
+          <div class="m">${dshort(x.date)}${x.dup ? ` · <span style="color:var(--warn)">${x.dup === "var" ? "zaten eklendi" : x.dup === "kart" ? "kart ödemesi: gelir değil, bankadan karta transfer olarak gir" : x.dup === "taksit" ? `${x.instPart.k}/${x.instPart.n}. taksit: alışveriş zaten kayıtlı` : "olası tekrar"}</span>` : ""}${x.inst ? ` · <span class="pill acc">${x.inst} taksit · aylık ${money(x.instPer)}</span> <span class="muted">(ekstrede ${x.instPart.k}/${x.inst}. taksit)</span>` : ""}${x.contactId ? ` · ${esc(con(x.contactId)?.name || "")}` : ""}</div>
           ${x.trade && imp.tradeAcc ? `<span class="pill acc" style="margin-top:4px;display:inline-block">⇄ ${x.amount > 0 ? "←" : "→"} ${esc(accName(acc(imp.tradeAcc)) || "")}</span>` : `<select class="imp-cat" data-i="${i}" style="margin-top:4px;padding:4px 6px;font-size:.82rem;width:auto;max-width:100%">${impCatOptions(x.type, x.cat)}</select>`}</div>
         <div class="amt ${x.amount > 0 ? "pos" : "neg"}" style="font-size:.92rem;text-align:right">${x.amount > 0 ? "+" : "−"}${fmtAsset(x.amt, IC)}${IC !== "TRY" ? `<div class="muted" style="font-size:.74rem;font-weight:400">${x.tl ? money(x.tl) : "≈ " + money(x.amt * (rateOf(IC) || 0))}${x.est ? " · kurla" : ""}</div>` : ""}</div></div>`).join("")}
     </div>${items.length > 600 ? `<p class="small-note">İlk 600 satır gösteriliyor; hepsi eklenecek.</p>` : ""}` : ""}
@@ -1531,7 +1587,7 @@ function impMapChanged() {
 async function commitImport() {
   const sel = imp.items.filter(x => x.sel), bi = impBalanceInfo();
   const code = accAsset(acc(imp.accountId)), batchId = uid8(), batchAt = new Date().toISOString();
-  const txs = sel.map(x => { const [category, sub] = x.cat.split("|"); const t = { id: uid8(), type: x.type, amount: x.amt, date: x.date, category, sub: sub || "", accountId: imp.accountId, contactId: x.contactId || "", note: x.desc.slice(0, 140), importKey: x.key, importId: batchId, importFile: (imp.fileName || "").slice(0, 80), importAt: batchAt }; if (code !== "TRY") { t.rate = x.price || rateOf(code); if (x.tl) t.tlAmount = x.tl; }
+  const txs = sel.map(x => { const [category, sub] = x.cat.split("|"); const t = { id: uid8(), type: x.type, amount: x.amt, date: x.date, category, sub: sub || "", accountId: imp.accountId, contactId: x.contactId || "", note: x.desc.slice(0, 140), importKey: x.key, importId: batchId, importFile: (imp.fileName || "").slice(0, 80), importAt: batchAt }; if (x.inst) t.inst = x.inst; if (code !== "TRY") { t.rate = x.price || rateOf(code); if (x.tl) t.tlAmount = x.tl; }
     if (x.trade && imp.tradeAcc && acc(imp.tradeAcc)) { // alış: TL hesabından → bu hesaba; satış: bu hesaptan → TL hesabına
       Object.assign(t, { type: "transfer", category: "Transfer", sub: "", importAcc: imp.accountId }); delete t.rate;
       if (x.amount > 0) Object.assign(t, { accountId: imp.tradeAcc, toAccountId: imp.accountId, amount: x.tl, toAmount: x.amt });
@@ -1588,9 +1644,11 @@ function submitForm(f) {
       const c = resolveCat(f, type); if (!c) { toast("Yeni kategorinin adını yaz."); return; }
       o.category = c.category; o.sub = c.sub; o.contactId = v("#f-con");
       if (code !== "TRY") o.rate = parseAmt(v("#f-rate")) || rateOf(code) || null;
+      const n = type === "gider" && isCredit(acc(o.accountId)) ? +v("#f-inst") || 1 : 1; if (n > 1) o.inst = n;
     }
     ls.set("kd-last-acc", o.accountId);
     const old = S.txns.find(x => x.id === id); if (old && old.planId) o.planId = old.planId;
+    if (old) for (const k of ["importKey", "importId", "importFile", "importAt", "importAcc", "tlAmount"]) if (old[k] != null && o[k] == null) o[k] = old[k]; // ekstre bağlantısı korunur
     put("txns", o); toast(id ? "İşlem güncellendi" : "İşlem kaydedildi"); closeSheet();
     if (old && o.type !== "transfer" && (old.category !== o.category || (old.sub || "") !== (o.sub || ""))) setTimeout(() => offerBulk(o, old.category), 60);
   } else if (kind === "plan") {
@@ -1753,7 +1811,7 @@ document.addEventListener("submit", e => {
   submitForm(e.target);
 });
 document.addEventListener("input", e => {
-  if (["f-amount", "f-rate", "f-toamt"].includes(e.target.id) && $("#frm")?.dataset.kind === "txn") updateTxnUnits();
+  if (["f-amount", "f-rate", "f-toamt", "f-inst"].includes(e.target.id) && $("#frm")?.dataset.kind === "txn") updateTxnUnits();
   if (e.target.id === "f-open") updateOpenConv();
   if (["f-limit", "f-avail"].includes(e.target.id)) { const L = parseAmt($("#f-limit").value), A = parseAmt($("#f-avail").value), h = $("#f-avail-hint"); if (L > 0 && A >= 0 && $("#f-avail").value) h.innerHTML = `Kaydedince kart borcu <b>${money(L - A)}</b> olarak ayarlanacak (limitin %${Math.round((L - A) / L * 100)} kadarı kullanılmış).`; }
   if (e.target.id === "fq") { ui.q = e.target.value; ui._focusQ = true; render(); } });
