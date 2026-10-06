@@ -476,6 +476,11 @@ function gmailPanel() {
   </div>`;
   if ($("#gmailPanel")) $("#gmailPanel").outerHTML = body; else openSheet("Gmail'den ekstre", body);
 }
+/* --- ekstre ↔ hesap eşleştirme (IBAN, hesap-ek no, kart son 4) --- */
+const idLabel = i => i.startsWith("IBAN:") ? i.slice(5).replace(/(.{4})/g, "$1 ").trim() : i.startsWith("KART:") ? "Kart •" + i.slice(5) : i.startsWith("HESAP:") ? "Hesap " + i.slice(6) : i;
+const idsFromInput = v => String(v || "").split(/[,;\n]+/).map(x => x.trim().toUpperCase().replace(/^KART\s*•?\s*/, "").replace(/^HESAP\s*/, "")).filter(Boolean).map(x => /^TR[\d\s]+$/.test(x) ? "IBAN:" + x.replace(/\s/g, "") : /^\d{4}$/.test(x) ? "KART:" + x : /^\d{5,10}\s*-\s*\d{1,3}$/.test(x) ? "HESAP:" + x.replace(/\s/g, "") : x.includes(":") ? x : null).filter(Boolean);
+function accountForIds(ids) { if (!ids || !ids.length) return null; const h = S.accounts.filter(a => (a.ids || []).some(i => ids.includes(i))); return h.length === 1 ? h[0] : null; }
+
 /* --- Gmail otomatik içe aktarma: uygulama açıkken yeni ekstreleri kendisi ekler --- */
 const GAuto = { busy: false, last: 0, need: false };
 const gmailAutoOn = () => ls.get("kd-gmail-auto") === "1";
@@ -494,10 +499,15 @@ async function gmailAutoImport(force) {
       const m = await Gmail.api("messages/" + m0.id + "?format=full"), from = ((m.payload.headers || []).find(h => h.name.toLowerCase() === "from") || {}).value || "";
       for (const f of Gmail.parts(m.payload).filter(f => /\.(pdf|xlsx?|csv)$/i.test(f.name))) {
         const key = m.id + "|" + f.name, done = gmailDone(); if (done[key]) continue;
-        const accId = accs[gmailPat(from, f.name)]; if (!acc(accId)) continue; // bu banka-hesap eşleşmesini bir kez elle yapmış olmalı
+        const patAcc = accs[gmailPat(from, f.name)], knownSender = Object.keys(accs).some(k => k.split("|")[0] === gmailSender(from));
+        if (!acc(patAcc) && !knownSender) continue; // bu bankadan hiç ekstre yüklenmemiş
+        let accId = null;
         try {
-          const a = await Gmail.api(`messages/${m.id}/attachments/${f.id}`), file = new File([b64u(a.data)], f.name);
-          imp = { accountId: accId }; setupImp(await IMP.fileToRows(file), file); imp.gmailKey = key;
+          const a = await Gmail.api(`messages/${m.id}/attachments/${f.id}`), file = new File([b64u(a.data)], f.name), rows = await IMP.fileToRows(file);
+          const ids = [...new Set([...(rows.ids || []), ...IMP.statementIds("", f.name)])], byId = accountForIds(ids);
+          accId = byId ? byId.id : (!ids.length && acc(patAcc) ? patAcc : null); // kimlik varsa sadece kimlikle eşleşen hesaba
+          if (!accId) { report.push({ accId: null, err: `tanınmayan hesap (${ids.map(idLabel).join(", ") || f.name}), bir kez elle yükle` }); continue; }
+          imp = { accountId: accId }; setupImp(rows, file); imp.gmailKey = key;
           const n = imp.items.filter(x => x.sel).length;
           if (n) await commitImport(true); else { done[key] = Date.now(); ls.set("kd-gmail-done", JSON.stringify(done)); }
           report.push({ accId, n });
@@ -510,7 +520,7 @@ async function gmailAutoImport(force) {
   GAuto.busy = false; renderChips();
   const add = report.filter(x => x.n), bad = report.filter(x => x.err);
   if (add.length) toast("Gmail'den eklendi: " + add.map(x => `${accName(acc(x.accId))} ${x.n} hareket`).join(" · "));
-  else if (bad.length) toast("Gmail: " + bad.map(x => `${accName(acc(x.accId))} – ${x.err}`).join(" · "));
+  else if (bad.length) toast("Gmail: " + bad.map(x => `${x.accId ? accName(acc(x.accId)) + " – " : ""}${x.err}`).join(" · "));
 }
 async function gmailOpen(msgId, attId, name) {
   const m = (Gmail.list || []).find(x => x.id === msgId); if (!m) return;
@@ -1111,6 +1121,8 @@ function accountForm(a) {
       <p class="small-note" style="margin:0" id="f-avail-hint">Kalan limiti bankanın uygulamasından bakıp yazarsan, borç buna göre eşitlenir. Ekstreden gelen tutarlarla oluşan farklar böylece düzelir.</p>
     </div>
     ${a && isCredit(a) ? instListHtml(a) : ""}
+    <label>Ekstre tanıma bilgisi <span class="muted" style="font-weight:400">(IBAN, hesap-ek no ya da kart son 4 hane; virgülle)</span><input id="f-ids" value="${esc((a?.ids || []).map(idLabel).join(", "))}" placeholder="Örn. TR26 0020 …, 8094007-18, 9099"></label>
+    <p class="small-note" style="margin:-4px 0 0">Ekstre yüklediğinde kendiliğinden öğrenilir. Aynı bankada birden çok hesabın varsa ekstrelerin doğru hesaba gitmesini bu sağlar.</p>
     <div style="display:grid;gap:6px;border:1px solid var(--line);border-radius:10px;padding:10px 12px">
       <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="f-excl" style="width:auto" ${a?.excl ? "checked" : ""}> Toplamlara dahil etme <span class="muted" style="font-size:.82rem">(net pozisyon, varlıklar, nakit akışı)</span></label>
       <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="f-hide" style="width:auto" ${a?.hide ? "checked" : ""}> Özet'te gizle <span class="muted" style="font-size:.82rem">(Hesaplar'da görünmeye devam eder)</span></label>
@@ -1581,6 +1593,7 @@ function setupImp(rows, file) {
     if (!map) { map = IMP.guessMapping(headers, rows.slice(hIdx + 1)); const ex = IMP.extract(rows, hIdx, map); if (acc(imp.accountId)?.kind === "kredi kartı" && ex.length && ex.filter(x => x.amount > 0).length > ex.length * 0.6) map.invert = true; }
     Object.assign(imp, { fileName: file.name, rows, hIdx, headers, sig, map, fixOpening: false, unitFor: null, unitMode: null, tradeAcc: tradeAccDefault(acc(imp.accountId)) });
     imp.meta = rows.meta || null;
+    imp.ids = [...new Set([...(rows.ids || IMP.statementIds(rows.slice(0, 15).map(r => (r || []).join(" ")).join("\n"))), ...IMP.statementIds("", file && file.name)])];
     if (imp.meta && isCredit(acc(imp.accountId))) { if (imp.meta.limit) imp.limit = imp.meta.limit; if (imp.meta.cutDay) imp.cut = imp.meta.cutDay; }
     buildImpItems();
 }
@@ -1717,13 +1730,15 @@ function renderImport() {
       ${items.some(x => x.trade) ? `<label>Alış / satışlar hangi TL hesabından?<select id="imp-trade"><option value="">— Transfer yapma, gelir/gider say —</option>${S.accounts.filter(x => accAsset(x) === "TRY" && !isCredit(x)).map(x => `<option value="${esc(x.id)}" ${x.id === imp.tradeAcc ? "selected" : ""}>${esc(accName(x))}</option>`).join("")}</select></label>
       <p class="small-note" style="margin:0">${items.filter(x => x.trade).length} alış/satış satırı TL hesabıyla <b>transfer</b> olarak kaydedilir: alışta TL hesabından para çıkar, ${esc(unitOf(code))} bu hesaba girer. Gelir/gider raporlarını şişirmez. O TL hesabının ekstresini sonra yüklersen bu satırlar "olası tekrar" diye işaretlenir.</p>` : ""}
       <p class="small-note" style="margin:0">Hesap ${esc(assetOf(code)[1])} cinsinden; işlemler <b>${u}</b> olarak kaydedilir. ${imp.unitMode === "tl" ? `Miktar açıklamada yazıyorsa (ör. "3 GR") o alınır, yazmıyorsa güncel kurla (1 ${u} = ${money(rateOf(code) || 0)}) hesaplanır${est ? `; <b>${est} satır kurla tahmin edildi</b>, kontrol et` : ""}.` : imp.unitMode === "col" ? "Miktar ilgili sütundan, alış fiyatı TL tutardan alınır." : `Tutarlar ${u} değil de TL ise yukarıdan "TL" seç.`}</p></div>`; })()}
+    ${(() => { const m = accountForIds(imp.ids); if (m && m.id !== imp.accountId) return `<div class="notice warn" style="margin:0"><span><b>Bu ekstre başka bir hesaba ait görünüyor:</b> ${esc(accName(m))} (${(imp.ids || []).filter(i => (m.ids || []).includes(i)).map(idLabel).join(", ")}).</span><button class="btn small primary" type="button" data-act="imp-switch" data-acc="${esc(m.id)}">O hesaba aktar</button></div>`;
+      if (imp.ids && imp.ids.length && !(acc(imp.accountId)?.ids || []).some(i => imp.ids.includes(i))) return `<p class="small-note" style="margin:0">Ekstrede bulunan kimlik: <b>${imp.ids.map(idLabel).join(", ")}</b>. Eklediğinde bu hesaba kaydedilir; sonraki ekstreler (otomatik içe aktarma dahil) bununla doğru hesaba gider.</p>`; return ""; })()}
     ${isCredit(acc(imp.accountId)) ? `<div style="display:grid;gap:8px;border:1px solid var(--line);border-radius:10px;padding:12px">
       <b style="font-size:.92rem">Kart limiti</b>
       <div class="f2"><label>Toplam limit (₺)<input id="imp-limit" inputmode="decimal" value="${imp.limit != null ? amtStr(imp.limit) : acc(imp.accountId).limit ? amtStr(acc(imp.accountId).limit) : ""}" placeholder="Örn. 90.000"></label>
       <label>Bankadaki güncel kalan limit (₺)<input id="imp-avail" inputmode="decimal" value="${imp.avail != null ? amtStr(imp.avail) : ""}" placeholder="Örn. 37.253,42"></label></div>
       <div class="f2"><label>Dönem içi harcamalar (₺)<input id="imp-spent" inputmode="decimal" value="${imp.spent != null && !isNaN(imp.spent) ? amtStr(imp.spent) : ""}" placeholder="Örn. 48.534,82"></label>
       <label>Hesap kesim günü<input id="imp-cut" inputmode="numeric" value="${imp.cut || acc(imp.accountId).cutDay || ""}" placeholder="Örn. 15"></label></div>
-      ${imp.meta ? `<p class="small-note" style="margin:0;color:var(--pos)">Ekstreden okundu: ${[imp.meta.limit ? "kart limiti " + money0(imp.meta.limit) : "", imp.meta.cutDay ? "kesim günü " + imp.meta.cutDay : "", imp.meta.debt != null ? "dönem borcu " + money(imp.meta.debt) : ""].filter(Boolean).join(" · ")}</p>` : ""}
+      ${imp.meta && (imp.meta.limit || imp.meta.cutDay || imp.meta.debt != null) ? `<p class="small-note" style="margin:0;color:var(--pos)">Ekstreden okundu: ${[imp.meta.limit ? "kart limiti " + money0(imp.meta.limit) : "", imp.meta.cutDay ? "kesim günü " + imp.meta.cutDay : "", imp.meta.debt != null ? "dönem borcu " + money(imp.meta.debt) : ""].filter(Boolean).join(" · ")}</p>` : ""}
       <p class="small-note" style="margin:0">Yazarsan kartın borcu bankadaki rakama sabitlenir; ekstredeki geçmiş harcamalar limiti ikinci kez düşürmez, sadece analizde kullanılır.</p></div>` : ""}
     ${bi && !isCredit(acc(imp.accountId)) ? `<div class="notice ${Math.abs(bi.diff) < 0.01 ? "" : "warn"}" style="margin:0"><span>${Math.abs(bi.diff) < 0.01 ? `<b>Bakiye tutuyor.</b> Bankadaki bakiye (${dshort(bi.date)}) ile uygulamadaki bakiye aynı: <b class="num">${fmtAsset(bi.bank, IC)}</b>` : `<b>Bakiye farkı var.</b> Bankada <b class="num">${fmtAsset(bi.bank, IC)}</b>, içe aktarma sonrası uygulamada <b class="num">${fmtAsset(bi.after, IC)}</b> olacak (fark ${IC === "TRY" ? signed(bi.diff) : fmtAsset(bi.diff, IC)}).<br><label style="display:flex;gap:8px;align-items:center;margin-top:6px;color:var(--ink);font-size:.9rem"><input type="checkbox" id="imp-fix" style="width:auto" ${imp.fixOpening ? "checked" : ""}> Açılış bakiyesini düzelterek eşitle (${fmtAsset((+acc(imp.accountId).opening || 0) + bi.diff, IC)})</label>`}</span></div>` : ""}
     ${impAnalysis(sel)}
@@ -1797,16 +1812,24 @@ async function commitImport(silent) {
     }
   }
   ls.set("kd-map:" + imp.sig, JSON.stringify(imp.map)); ls.set("kd-imp-acc", imp.accountId);
+  const idOps = [];
+  if (imp.ids && imp.ids.length) { // ekstre kimliklerini bu hesaba öğret, başka hesapta varsa oradan kaldır
+    const have = accUpd ? accUpd.ids || a.ids || [] : a.ids || [], merged = [...new Set([...have, ...imp.ids])];
+    if (merged.length !== have.length) accUpd = { ...(accUpd || a), ids: merged };
+    S.accounts.filter(o => o.id !== a.id && (o.ids || []).some(i => imp.ids.includes(i))).forEach(o => { const { id, ...d } = { ...o, ids: o.ids.filter(i => !imp.ids.includes(i)) }; idOps.push({ type: "set", col: "accounts", id, data: clean(d) }); });
+  }
   if (imp.gmailKey) { const d = gmailDone(); d[imp.gmailKey] = Date.now(); ls.set("kd-gmail-done", JSON.stringify(d)); }
   if (live()) {
     const ops = txs.map(t => { const { id, ...d } = t; return { type: "set", col: "txns", id, data: d }; });
     sel.filter(x => x.replaceId).forEach(x => ops.push({ type: "delete", col: "txns", id: x.replaceId }));
+    ops.push(...idOps);
     if (fix != null) { const { id, ...d } = { ...a, opening: fix }; ops.push({ type: "set", col: "accounts", id, data: d }); }
     if (accUpd) { const { id, ...d } = accUpd; ops.push({ type: "set", col: "accounts", id, data: clean(d) }); }
     const ok = await safe(() => batchWrite(ops), `${txs.length} işlem eklendi${accUpd && accUpd.syncDate ? " · kalan limit sabitlendi" : ""}`);
     if (!ok) return; Drive.dirty();
   } else {
     const rm = new Set(sel.map(x => x.replaceId).filter(Boolean)); S.txns = S.txns.filter(t => !rm.has(t.id));
+    idOps.forEach(o => { const x = acc(o.id); if (x) x.ids = o.data.ids; });
     S.txns.push(...txs); if (fix != null) a.opening = fix; if (accUpd) Object.assign(a, accUpd); saveDemo(); render(); toast(`${txs.length} işlem eklendi${accUpd && accUpd.syncDate ? " · kalan limit sabitlendi" : ""}`);
   }
   if (silent) { imp = null; render(); return true; }
@@ -1851,7 +1874,7 @@ function submitForm(f) {
     imp = { accountId: accId, gmailKey: P.key }; ui.gmailPending = null; closeSheet(); readStatement(P.file); return;
   } else if (kind === "account") {
     const limit = parseAmt(v("#f-limit")), avail = parseAmt(v("#f-avail"));
-    const o = { id: id || uid8(), excl: !!$("#f-excl")?.checked, hide: !!$("#f-hide")?.checked, name: v("#f-name"), group: v("#f-group") || inferGroup(v("#f-name")) || (v("#f-kind") === "nakit" ? "Nakit" : ""), kind: v("#f-kind"), asset: v("#f-asset") || "TRY", opening: parseAmt(v("#f-open")) || 0 };
+    const o = { id: id || uid8(), ids: idsFromInput(v("#f-ids")), excl: !!$("#f-excl")?.checked, hide: !!$("#f-hide")?.checked, name: v("#f-name"), group: v("#f-group") || inferGroup(v("#f-name")) || (v("#f-kind") === "nakit" ? "Nakit" : ""), kind: v("#f-kind"), asset: v("#f-asset") || "TRY", opening: parseAmt(v("#f-open")) || 0 };
     if (isCredit(o)) {
       const old = old0(o.id) || {};
       o.limit = limit > 0 ? limit : 0;
@@ -1976,6 +1999,7 @@ document.addEventListener("click", async e => {
   if (a === "gmail-auth") { if (await Gmail.authorize()) { gmailPanel(); Gmail.search(ls.get("kd-gmail-q") || GMAIL_Q); } return; }
   if (a === "gmail-search") { const q = $("#gm-q").value.trim() || GMAIL_Q; ls.set("kd-gmail-q", q); return Gmail.search(q); }
   if (a === "gmail-reset-q") { ls.del("kd-gmail-q"); $("#gm-q").value = GMAIL_Q; return Gmail.search(GMAIL_Q); }
+  if (a === "imp-switch") { imp.accountId = el.dataset.acc; imp.unitFor = null; buildImpItems(); renderImport(); toast(`Hesap: ${accName(acc(imp.accountId))}`); return; }
   if (a === "imp-pick") { imp.accountId = $("#imp-acc").value; $("#stmtFile").value = ""; $("#stmtFile").click(); return; }
   if (a === "imp-commit") { el.disabled = true; el.textContent = "Ekleniyor…"; await commitImport(); return; }
   if (a === "export-json") return saveFile(`kasa-defteri-yedek-${TODAY}.json`, JSON.stringify(snapshotData(), null, 1), "application/json");

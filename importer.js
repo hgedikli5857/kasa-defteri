@@ -267,10 +267,21 @@ export function statementMeta(text) {
   const c = T.match(/(?<!SONRAKI )HESAP KESIM TARIHI\s*:?\s*(\d{1,2})[\s./-]/); if (c && +c[1] >= 1 && +c[1] <= 31) meta.cutDay = +c[1];
   return meta.limit || meta.cutDay || meta.debt ? meta : null;
 }
+// Ekstrenin hangi hesaba/karta ait olduğunu gösteren kimlikler: IBAN, hesap no-ek no, kartın son 4 hanesi
+export function statementIds(text, fileName) {
+  const ids = new Set(), T = norm(text || "");
+  for (const m of T.matchAll(/TR\s?\d{2}(?:\s?\d{4}){5}\s?\d{2}/g)) ids.add("IBAN:" + m[0].replace(/\s/g, ""));
+  for (const m of T.matchAll(/HESAP[^\n]{0,30}?\b(\d{6,10})\s*[-/]\s*(\d{1,3})\b/g)) ids.add(`HESAP:${m[1]}-${m[2]}`);
+  for (const m of T.matchAll(/\b\d{4}[\s*X]*\*{4,}[\s*X]*(\d{4})\b|\*{4,}\s?(\d{4})\b|\b(\d{4})\s+ILE BITEN/g)) ids.add("KART:" + (m[1] || m[2] || m[3]));
+  const f = String(fileName || "").match(/MUSTERI\s*NO[_ -]?(\d{5,10}).*?EK\s*NO[_ -]?(\d{1,3})/i); if (f) ids.add(`HESAP:${f[1]}-${f[2]}`);
+  return [...ids];
+}
 async function pdfToRows(buf, password) {
   const lines = await pdfLines(buf, password);
   const meta = statementMeta(lines.map(l => l.cells.map(c => c.s).join(" ")).join("\n"));
-  const withMeta = r => { if (meta) r.meta = meta; return r; };
+  const head = lines.filter(l => l.page === 1).slice(0, 40).map(l => l.cells.map(c => c.s).join(" ")).filter(t => !/^\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b|^\d{1,2}\s+[A-ZÇĞİÖŞÜa-zçğıöşü]+\s+\d{4}\b/.test(t)).join("\n");
+  const ids = statementIds(head);
+  const withMeta = r => { if (meta) r.meta = meta; r.ids = ids; return r; };
   const table = linesToTable(lines);
   if (table) {
     const h = detectHeader(table), m = guessMapping(table[h], table.slice(h + 1));

@@ -139,6 +139,8 @@ Bankanın e-postayla gönderdiği ekstreleri indirmeden içe aktarmak için. Uyg
 2. **Google Auth Platform → Kitle (Audience)** → **Test kullanıcıları** → kendi Gmail adresini ekle. (Uygulama "Yayında" ise ve Google Gmail iznini engellerse, durumu **Teste geri al** de.)
 3. Uygulamada **İşlemler → Ekstre içe aktar → ✉ Gmail'deki ekstrelerden seç → Gmail'e bağlan**. "Google bu uygulamayı doğrulamadı" uyarısında **Gelişmiş → Kasa Defteri'ne git → İzin ver**.
 
+**Aynı bankada birden çok hesap:** Ekstredeki IBAN, hesap-ek no (ör. 8094007-18) ve kartın son 4 hanesi okunur. Bir ekstreyi bir hesaba eklediğinde bu bilgiler o hesaba kaydedilir (Hesabı düzenle → Ekstre tanıma bilgisi). Sonraki ekstreler bu bilgiyle doğru hesaba gider; yanlış hesap seçersen uyarı çıkar. Otomatik içe aktarma, kimliği tanınmayan ekstreyi eklemez.
+
 **Otomatik içe aktarma:** Gmail penceresinde **Yeni ekstreleri otomatik ekle**'yi aç. Uygulama açıkken 15 dakikada bir Gmail'e bakar; bir kez hesabını seçtiğin bankaların yeni ekstrelerini (son 21 gün) kendisi ekler, tekrarları atlar. Üstteki **Gmail** etiketi durumu gösterir; izin süresi dolunca etikete dokunup yeniden bağlan. Uygulama kapalıyken çalışmaz.
 
 **Kullanım:** Listeden ekstre ekine (PDF/Excel) dokun → hesabı seç → kontrol et → ekle. Aynı bankanın sonraki ekstreleri aynı hesaba önerilir; yüklenenler "✓ yüklendi" olarak işaretlenir. Gmail izni de 1 saat geçerlidir; süresi dolunca yeniden bağlan.
