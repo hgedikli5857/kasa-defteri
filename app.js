@@ -1587,13 +1587,13 @@ function buildImpItems() {
   const byContact = {};
   S.txns.slice().sort((a, b) => a.date < b.date ? -1 : 1).forEach(t => {
     if (t.type === "transfer" || !t.category) return;
-    if (t.note) learned[IMP.learnKey(t.note)] = t.category + (t.sub ? "|" + t.sub : "");
+    if (t.note && !/^Diğer (gider|gelir)$/.test(t.category)) learned[IMP.learnKey(t.note)] = t.category + (t.sub ? "|" + t.sub : "");
     if (t.contactId) byContact[t.contactId + "|" + t.type] = t.category;
   });
   const keys = new Set(S.txns.map(t => t.importKey).filter(Boolean));
   const occ = {};
   const contacts = S.contacts.filter(c => c.name && c.name.length >= 4).map(c => ({ id: c.id, n: IMP.up(c.name) }));
-  const seenInst = [], acNow = imp.accountId;
+  const seenInst = [], acNow = imp.accountId, usedMan = new Set();
   imp.items = ext.map(x => {
     const base = `${imp.accountId}|${x.date}|${x.amount}|${IMP.learnKey(x.desc)}`;
     occ[base] = (occ[base] || 0) + 1;
@@ -1611,6 +1611,13 @@ function buildImpItems() {
     let cat = IMP.ownMove(x.desc, mySurname()) ? MOVE_CAT : IMP.guessCategory(x.desc, x.amount, learned);
     if (ct && /^Diğer/.test(cat) && byContact[ct.id + "|" + type]) cat = byContact[ct.id + "|" + type];
     if (!cat.includes("|")) { const sg = IMP.guessSub(x.desc); if (sg && subsOf(type, cat).includes(sg)) cat += "|" + sg; }
+    // elle girilmiş (ekstresiz) kayıt: aynı gün, yakın tutar → ekstredeki kayıt onun yerine geçer (çift sayılmaz, açıklama ve doğru tutar gelir)
+    const man = !exact ? S.txns.find(t => t.accountId === acNow && !t.importKey && t.type === type && t.date === x.date && !usedMan.has(t.id) && Math.abs(t.amount - amt) <= Math.max(5, amt * 0.15)) : null;
+    const mc = man && man.category && !/^Diğer/.test(man.category) ? man.category : "", gc = /^Diğer/.test(cat) ? "" : cat.split("|")[0];
+    if (man && mc && gc && mc !== gc && !(man.note || "").trim()) { // kategori çelişiyor: otomatik değiştirme, kullanıcı karar versin
+      usedMan.add(man.id); return { ...x, key, type, amt, dup: "elle?", sel: false, manAmt: man.amount, manCat: mc, cat, contactId: ct ? ct.id : "" };
+    }
+    if (man) { usedMan.add(man.id); return { ...x, key, type, amt, dup: "elle", sel: true, replaceId: man.id, manAmt: man.amount, cat: man.category && !/^Diğer/.test(man.category) && man.category !== "Transfer" ? man.category + (man.sub ? "|" + man.sub : "") : cat, contactId: man.contactId || (ct ? ct.id : "") }; }
     const item = { ...x, key, type, amt, dup: exact ? "var" : maybe ? "olası" : "", sel: !exact && !maybe, cat, contactId: ct ? ct.id : "" };
     const ii = isCard && type === "gider" && !exact ? instInfo(x.desc) : null;
     if (ii) { // ekstredeki taksit satırı → tek bir taksitli alışveriş
@@ -1634,7 +1641,7 @@ function impBalanceInfo() {
   const sameDay = it.filter(x => x.date === maxD);
   const latest = desc ? sameDay[0] : sameDay[sameDay.length - 1];
   const a = acc(imp.accountId); if (!a) return null;
-  const after = balanceOf(a) + sum(imp.items.filter(x => x.sel), x => x.amount);
+  const after = balanceOf(a) + sum(imp.items.filter(x => x.sel), x => x.amount + (x.replaceId ? (x.type === "gider" ? x.manAmt : -x.manAmt) : 0));
   return { bank: latest.balance, after, diff: Math.round((latest.balance - after) * 100) / 100, date: latest.date };
 }
 function renderImport() {
@@ -1682,7 +1689,7 @@ function renderImport() {
       ${items.slice(0, 600).map((x, i) => `<div class="row" style="grid-template-columns:auto minmax(0,1fr) auto;opacity:${x.sel ? 1 : .55}">
         <input type="checkbox" class="imp-sel" data-i="${i}" ${x.sel ? "checked" : ""} style="width:auto" aria-label="Seç">
         <div style="min-width:0"><div class="t" style="font-size:.9rem;font-weight:500">${esc(x.desc || "(açıklama yok)")}</div>
-          <div class="m">${dshort(x.date)}${x.dup ? ` · <span style="color:var(--warn)">${x.dup === "var" ? "zaten eklendi" : x.dup === "kart" ? "kart ödemesi: gelir değil, bankadan karta transfer olarak gir" : x.dup === "taksit" ? `${x.instPart.k}/${x.instPart.n}. taksit: alışveriş zaten kayıtlı` : "olası tekrar"}</span>` : ""}${x.inst ? ` · <span class="pill acc">${x.inst} taksit · aylık ${money(x.instPer)}</span> <span class="muted">(ekstrede ${x.instPart.k}/${x.inst}. taksit)</span>` : ""}${x.contactId ? ` · ${esc(con(x.contactId)?.name || "")}` : ""}</div>
+          <div class="m">${dshort(x.date)}${x.dup ? ` · <span style="color:var(--warn)">${x.dup === "var" ? "zaten eklendi" : x.dup === "kart" ? "kart ödemesi: gelir değil, bankadan karta transfer olarak gir" : x.dup === "taksit" ? `${x.instPart.k}/${x.instPart.n}. taksit: alışveriş zaten kayıtlı` : x.dup === "elle" ? `elle girdiğin ${money(x.manAmt)} kaydın yerine geçer` : x.dup === "elle?" ? `elle girdiğin ${money(x.manAmt)} (${esc(x.manCat)}) kaydınla aynı olabilir` : "olası tekrar"}</span>` : ""}${x.inst ? ` · <span class="pill acc">${x.inst} taksit · aylık ${money(x.instPer)}</span> <span class="muted">(ekstrede ${x.instPart.k}/${x.inst}. taksit)</span>` : ""}${x.contactId ? ` · ${esc(con(x.contactId)?.name || "")}` : ""}</div>
           ${x.trade && imp.tradeAcc ? `<span class="pill acc" style="margin-top:4px;display:inline-block">⇄ ${x.amount > 0 ? "←" : "→"} ${esc(accName(acc(imp.tradeAcc)) || "")}</span>` : `<select class="imp-cat" data-i="${i}" style="margin-top:4px;padding:4px 6px;font-size:.82rem;width:auto;max-width:100%">${impCatOptions(x.type, x.cat)}</select>`}</div>
         <div class="amt ${x.amount > 0 ? "pos" : "neg"}" style="font-size:.92rem;text-align:right">${x.amount > 0 ? "+" : "−"}${fmtAsset(x.amt, IC)}${IC !== "TRY" ? `<div class="muted" style="font-size:.74rem;font-weight:400">${x.tl ? money(x.tl) : "≈ " + money(x.amt * (rateOf(IC) || 0))}${x.est ? " · kurla" : ""}</div>` : ""}</div></div>`).join("")}
     </div>${items.length > 600 ? `<p class="small-note">İlk 600 satır gösteriliyor; hepsi eklenecek.</p>` : ""}` : ""}
@@ -1748,11 +1755,13 @@ async function commitImport() {
   if (imp.gmailKey) { const d = gmailDone(); d[imp.gmailKey] = Date.now(); ls.set("kd-gmail-done", JSON.stringify(d)); }
   if (live()) {
     const ops = txs.map(t => { const { id, ...d } = t; return { type: "set", col: "txns", id, data: d }; });
+    sel.filter(x => x.replaceId).forEach(x => ops.push({ type: "delete", col: "txns", id: x.replaceId }));
     if (fix != null) { const { id, ...d } = { ...a, opening: fix }; ops.push({ type: "set", col: "accounts", id, data: d }); }
     if (accUpd) { const { id, ...d } = accUpd; ops.push({ type: "set", col: "accounts", id, data: clean(d) }); }
     const ok = await safe(() => batchWrite(ops), `${txs.length} işlem eklendi${accUpd && accUpd.syncDate ? " · kalan limit sabitlendi" : ""}`);
     if (!ok) return; Drive.dirty();
   } else {
+    const rm = new Set(sel.map(x => x.replaceId).filter(Boolean)); S.txns = S.txns.filter(t => !rm.has(t.id));
     S.txns.push(...txs); if (fix != null) a.opening = fix; if (accUpd) Object.assign(a, accUpd); saveDemo(); render(); toast(`${txs.length} işlem eklendi${accUpd && accUpd.syncDate ? " · kalan limit sabitlendi" : ""}`);
   }
   imp = null; closeSheet(); ui.tab = "islemler"; ls.set("kd-tab", "islemler"); render();

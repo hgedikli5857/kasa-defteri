@@ -113,16 +113,26 @@ function linesToTable(lines) {
   // çok satırlı açıklamaları önceki harekete ekle
   const m = guessMapping(rows[hIdx], rows.slice(hIdx + 1));
   const out = rows.slice(0, hIdx + 1);
-  let prevLine = null, prevIsTx = false, contN = 0;
-  rows.slice(hIdx + 1).forEach((r, k) => {
+  let prevLine = null, prevIsTx = false, contN = 0, pre = [];
+  const body = rows.slice(hIdx + 1);
+  const isTx = r => parseDate(r[m.date]) != null && r.some((v, i) => i !== m.desc && v && /\d,\d{2}\b|\d\.\d{2}\b/.test(v) && parseAmount(v) != null);
+  body.forEach((r, k) => {
     const L = meta[k], prev = out[out.length - 1];
     const hasDate = parseDate(r[m.date]) != null;
     const hasAmt = r.some((v, i) => i !== m.desc && v && /\d,\d{2}\b|\d\.\d{2}\b/.test(v) && parseAmount(v) != null);
-    // devam satırı: tarih/tutar yok, aynı sayfada ve bir önceki satırın hemen altında
-    const near = prevLine && L.page === prevLine.page && (prevLine.y - L.y) < Math.max(L.h, prevLine.h) * 2.4;
-    if (!hasDate && !hasAmt && prevIsTx && near && contN < 3 && m.desc >= 0) {
-      const txt = r.filter(Boolean).join(" "); if (txt) prev[m.desc] = (prev[m.desc] + " " + txt).trim(); contN++;
-    } else { out.push(r); prevIsTx = hasDate && hasAmt; contN = 0; }
+    const txt = r.filter(Boolean).join(" "), N = norm(txt);
+    if (!hasDate && !hasAmt && /TARIH/.test(N) && /TUTAR|BAKIYE|ACIKLAMA/.test(N)) { pre = []; prevIsTx = false; prevLine = L; return; } // sayfa başı tekrar eden başlık
+    if (!hasDate && !hasAmt && m.desc >= 0 && txt) {
+      // açıklama satırı: hareket satırının üstünde mi (ör. Kuveyt Türk: uzun açıklama tarih satırının üstüne taşar) altında mı?
+      const nx = body[k + 1], NL = meta[k + 1];
+      const dPrev = prevLine && L.page === prevLine.page ? prevLine.y - L.y : Infinity;
+      const dNext = nx && NL && NL.page === L.page && isTx(nx) ? L.y - NL.y : Infinity;
+      if (dNext < Math.max(L.h, NL ? NL.h : 0) * 2.4 && dNext < dPrev) { pre.push(txt); prevLine = L; return; }
+      if (prevIsTx && dPrev < Math.max(L.h, prevLine.h) * 2.4 && contN < 3) { prev[m.desc] = (prev[m.desc] + " " + txt).trim(); contN++; prevLine = L; return; }
+    }
+    if (hasDate && hasAmt && pre.length) { r[m.desc] = (pre.join(" ") + " " + (r[m.desc] || "")).trim(); }
+    pre = [];
+    out.push(r); prevIsTx = hasDate && hasAmt; contN = 0;
     prevLine = L;
   });
   return out;
@@ -131,19 +141,29 @@ function linesToTable(lines) {
 const MONEY = /[-+]?\(?\d{1,3}(?:\.\d{3})*,\d{2,4}\)?(?:\s*(?:TL|TRY|B|A|\+|-))?|[-+]?\d+,\d{2,4}(?:\s*(?:TL|TRY))?/g;
 function linesToRegexRows(lines) {
   const rows = [["Tarih", "Açıklama", "Tutar", "Bakiye"]];
-  let lastL = null;
-  for (const l of lines) {
-    const t = l.cells.map(c => c.s).join("  ");
-    const dm = t.match(/^(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}-\d{2}-\d{2})\s+(.*)$/);
-    if (!dm) { const prev = rows[rows.length - 1]; const near = lastL && l.page === lastL.page && (lastL.y - l.y) < Math.max(l.h, lastL.h) * 2.4; if (rows.length > 1 && near && t && !(t.match(MONEY) || []).length && t.length < 120) prev[1] = (prev[1] + " " + t).trim(); lastL = null; continue; }
+  let lastL = null, pre = [];
+  const DRX = /^(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}-\d{2}-\d{2})\s+(.*)$/, txt = l => l.cells.map(c => c.s).join("  ");
+  lines.forEach((l, i) => {
+    const t = txt(l);
+    const dm = t.match(DRX);
+    if (!dm) {
+      const N = norm(t);
+      if (!t || (t.match(MONEY) || []).length || t.length >= 160 || (/TARIH/.test(N) && /TUTAR|BAKIYE|ACIKLAMA/.test(N))) { lastL = null; pre = []; return; }
+      // satır bir sonraki hareketin üstüne mi taşmış (Kuveyt Türk) yoksa öncekinin devamı mı?
+      const nx = lines[i + 1], dNext = nx && nx.page === l.page && DRX.test(txt(nx)) ? l.y - nx.y : Infinity;
+      const dPrev = lastL && l.page === lastL.page ? lastL.y - l.y : Infinity, lim = h => Math.max(l.h, h) * 2.4;
+      if (dNext < dPrev && dNext < lim(nx.h)) { pre.push(t); return; }
+      if (rows.length > 1 && lastL && dPrev < lim(lastL.h) && t.length < 120) rows[rows.length - 1][1] = (rows[rows.length - 1][1] + " " + t).trim();
+      lastL = null; return;
+    }
     lastL = l;
     const rest = dm[2]; const ms = [...rest.matchAll(MONEY)];
-    if (!ms.length) continue;
+    if (!ms.length) { pre = []; return; }
     const tailStart = ms.length >= 2 && rest.slice(ms[ms.length - 2].index + ms[ms.length - 2][0].length, ms[ms.length - 1].index).trim() === "" ? ms.length - 2 : ms.length - 1;
     const amt = ms[tailStart][0], bal = tailStart < ms.length - 1 ? ms[ms.length - 1][0] : "";
-    const desc = rest.slice(0, ms[tailStart].index).replace(/\s+/g, " ").trim();
+    const desc = (pre.join(" ") + " " + rest.slice(0, ms[tailStart].index)).replace(/\s+/g, " ").trim(); pre = [];
     rows.push([dm[1], desc, amt, bal]);
-  }
+  });
   return rows.length > 1 ? rows : null;
 }
 /* ---------- görsel (ekran görüntüsü / fotoğraf) → OCR ---------- */
@@ -447,11 +467,12 @@ const RULES_IN = [
 // "A00QU Firma Adı: ODEAL//UCUZLER MARKET ANKARA,Harcama" -> "UCUZLER MARKET ANKARA"
 export function cleanDesc(d) {
   let t = String(d ?? "").replace(/\s+/g, " ").trim();
-  t = t.replace(/^(?=[A-Z0-9]{4,8}\b)(?=[A-Z0-9]*\d)[A-Z0-9]{4,8}\s+/i, "");           // baştaki referans kodu (A00QU, 123456)
+  t = t.replace(/^(?!A101\b)(?=[A-Z0-9]{4,8}\b)(?=[A-Z0-9]*\d)[A-Z0-9]{4,8}\s+/i, "");           // baştaki referans kodu (A00QU, 123456)
   t = t.replace(/\b(firma ad[ıi]|i[şs]yeri( ad[ıi])?|al[ıi]c[ıi]|g[öo]nderen|a[çc][ıi]klama)\s*:\s*/gi, "");
   t = t.replace(/\b(ODEAL|IYZICO|IYZ|PAYTR|PARAM|PAPARA|SIPAY|MOKA|ESNEKPOS|PAYU|STRIPE|PAYPAL)\s*(\/\/|\*|\/)\s*/gi, "");
   t = t.replace(/[,;\s]+(harcama|al[ıi]şveri[şs]|i[şs]lem|[öo]deme|provizyon|pe[şs]in|taksitli)\s*$/i, "");
   t = t.replace(/^(pos|sanal pos|internet|e-ticaret|kart)\s*[-:]?\s+(?=\S)/i, "");
+  t = t.replace(/(^|\s)A(?=[A-Z0-9]{4}\b)(?=[A-Z]*\d)[A-Z0-9]{4}(?=\s|$)/g, " "); // Kuveyt Türk referans kodları (A00Q3, AS73E)
   t = t.replace(/\s*\*{2,}\d+\s*/g, " ").replace(/\s+/g, " ").replace(/^[,;:\-\s]+|[,;:\-\s]+$/g, "").trim();
   return t || String(d ?? "").trim();
 }
