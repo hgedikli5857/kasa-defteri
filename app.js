@@ -334,6 +334,7 @@ async function boot() {
     if (!u) { mode = "signedout"; S = emptyState(); renderLogin(); return; }
     mode = "loading"; S = emptyState(); showApp(); subscribe();
     Drive.init();
+    setTimeout(() => gmailAutoImport(), 8000);
   });
 }
 function subscribe() {
@@ -469,9 +470,47 @@ function gmailPanel() {
           return `<button class="btn small ${did ? "" : "primary"}" type="button" data-gmail-msg="${esc(m.id)}" data-gmail-att="${esc(f.id)}" data-gmail-name="${esc(f.name)}">${did ? "✓ " : "⇣ "}${esc(f.name.length > 28 ? f.name.slice(0, 26) + "…" : f.name)}${did ? " · yüklendi" : ""}</button>`; }).join("")}
           ${!m.files.length && m.hasHtml ? `<button class="btn small" type="button" data-gmail-msg="${esc(m.id)}" data-gmail-att="" data-gmail-name="eposta.html">${done[m.id + "|eposta.html"] ? "✓ " : "⇣ "}E-postadaki tabloyu oku</button>` : ""}
           ${!m.files.length && !m.hasHtml ? `<span class="muted" style="font-size:.8rem">Okunabilir ek yok</span>` : ""}</div></div>`).join("")}</div>` : `<p class="muted">Bu aramayla e-posta bulunamadı. Aramayı değiştir (ör. <code>from:kuveytturk has:attachment</code>).</p>`) : ""}
-      <p class="small-note" style="margin:0">Bir eke dokununca hangi hesaba ait olduğunu seçersin; aynı bankanın sonraki ekstreleri o hesaba otomatik önerilir. Daha önce eklenen hareketler tekrar eklenmez.</p>`}
+      <p class="small-note" style="margin:0">Bir eke dokununca hangi hesaba ait olduğunu seçersin; aynı bankanın sonraki ekstreleri o hesaba otomatik önerilir. Daha önce eklenen hareketler tekrar eklenmez.</p>
+      <label style="display:flex;gap:8px;align-items:flex-start;border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:var(--ink)"><input type="checkbox" id="gm-auto" style="width:auto;margin-top:3px" ${gmailAutoOn() ? "checked" : ""}>
+        <span><b>Yeni ekstreleri otomatik ekle</b><br><span class="muted" style="font-size:.84rem">Uygulama açıkken 15 dakikada bir Gmail'e bakar; daha önce bir kez hesabını seçtiğin bankaların yeni ekstrelerini kontrol etmeden ekler (tekrarlar atlanır, "Yüklenen ekstreler"den geri alınabilir).${ls.get("kd-gmail-auto-at") ? ` Son kontrol: ${tfmt.format(new Date(ls.get("kd-gmail-auto-at")))}.` : ""}</span></span></label>`}
   </div>`;
   if ($("#gmailPanel")) $("#gmailPanel").outerHTML = body; else openSheet("Gmail'den ekstre", body);
+}
+/* --- Gmail otomatik içe aktarma: uygulama açıkken yeni ekstreleri kendisi ekler --- */
+const GAuto = { busy: false, last: 0, need: false };
+const gmailAutoOn = () => ls.get("kd-gmail-auto") === "1";
+async function gmailAutoImport(force) {
+  if (!live() || !gmailAutoOn() || GAuto.busy || !navigator.onLine) return;
+  Gmail.load(); if (!Gmail.valid()) { if (!GAuto.need) { GAuto.need = true; renderChips(); } return; }
+  if (!force && Date.now() - GAuto.last < 15 * 60e3) return;
+  if (imp || ($("#sheetRoot") && $("#sheetRoot").innerHTML.trim())) return; // kullanıcı bir iş yaparken araya girme
+  GAuto.busy = true; GAuto.last = Date.now(); GAuto.need = false; renderChips();
+  let accs = {}; try { accs = JSON.parse(ls.get("kd-gmail-acc") || "{}"); } catch (e) { }
+  const report = [];
+  try {
+    const q = (ls.get("kd-gmail-q") || GMAIL_Q).replace(/\s*newer_than:\S+/g, "") + " newer_than:21d";
+    const r = await Gmail.api("messages?maxResults=15&q=" + encodeURIComponent(q));
+    for (const m0 of r.messages || []) {
+      const m = await Gmail.api("messages/" + m0.id + "?format=full"), from = ((m.payload.headers || []).find(h => h.name.toLowerCase() === "from") || {}).value || "";
+      for (const f of Gmail.parts(m.payload).filter(f => /\.(pdf|xlsx?|csv)$/i.test(f.name))) {
+        const key = m.id + "|" + f.name, done = gmailDone(); if (done[key]) continue;
+        const accId = accs[gmailPat(from, f.name)]; if (!acc(accId)) continue; // bu banka-hesap eşleşmesini bir kez elle yapmış olmalı
+        try {
+          const a = await Gmail.api(`messages/${m.id}/attachments/${f.id}`), file = new File([b64u(a.data)], f.name);
+          imp = { accountId: accId }; setupImp(await IMP.fileToRows(file), file); imp.gmailKey = key;
+          const n = imp.items.filter(x => x.sel).length;
+          if (n) await commitImport(true); else { done[key] = Date.now(); ls.set("kd-gmail-done", JSON.stringify(done)); }
+          report.push({ accId, n });
+        } catch (e) { report.push({ accId, err: e instanceof IMP.PdfPasswordError ? "şifreli PDF, elle yükle" : (e.message || "okunamadı") }); }
+        imp = null;
+      }
+    }
+    ls.set("kd-gmail-auto-at", new Date().toISOString());
+  } catch (e) { if (e.status === 401) GAuto.need = true; }
+  GAuto.busy = false; renderChips();
+  const add = report.filter(x => x.n), bad = report.filter(x => x.err);
+  if (add.length) toast("Gmail'den eklendi: " + add.map(x => `${accName(acc(x.accId))} ${x.n} hareket`).join(" · "));
+  else if (bad.length) toast("Gmail: " + bad.map(x => `${accName(acc(x.accId))} – ${x.err}`).join(" · "));
 }
 async function gmailOpen(msgId, attId, name) {
   const m = (Gmail.list || []).find(x => x.id === msgId); if (!m) return;
@@ -627,6 +666,7 @@ function renderChips() {
     const t = s === "busy" ? "Drive · kaydediliyor" : s === "err" ? "Drive · sorun var" : Drive.lastBackup ? `Drive · ${ageH < 24 ? "yedek " + tfmt.format(new Date(Drive.lastBackup)) : "yedek eski"}` : s === "need" ? "Drive · yedekle" : "Drive · hazır";
     h += `<button class="chip" type="button" data-act="drive"><span class="dot ${cls}"></span>${t}</button>`;
   }
+  if (live() && gmailAutoOn()) h += `<button class="chip" type="button" data-act="${GAuto.need ? "gmail-reauth" : "gmail"}"><span class="dot ${GAuto.busy ? "busy" : GAuto.need ? "err" : "ok"}"></span>${GAuto.busy ? "Gmail · kontrol ediliyor" : GAuto.need ? "Gmail · bağlan" : "Gmail · otomatik"}</button>`;
   if (usesForeign()) { const src = Object.keys(RATES.auto).length ? (RATES.failed ? "err" : "ok") : "busy"; h += `<button class="chip" type="button" data-act="rates"><span class="dot ${src}"></span>Kurlar${RATES.date ? " · " + esc(String(RATES.date).slice(11, 16)) : ""}</button>`; }
   if (user) h += `<button class="chip acc-chip" type="button" data-act="account">${user.photoURL ? `<img src="${esc(user.photoURL)}" alt="" referrerpolicy="no-referrer">` : ""}${esc(user.displayName || user.email || "Hesabım")}</button>`;
   else if (mode === "demo") h += `<button class="chip" type="button" data-act="account">Deneme modu</button>`;
@@ -1524,6 +1564,15 @@ async function readStatement(file, password) {
     const rows = img && files.length > 1 ? await IMP.imagesToRows(files, prog) : await IMP.fileToRows(file, password, prog);
     if (img) file = { name: files.length > 1 ? `${files.length} ekran görüntüsü` : file.name };
     if (!rows || !rows.length) { toast("Dosyada okunabilir satır yok."); return; }
+    setupImp(rows, file);
+    clearTimeout(tt); $("#toastRoot").innerHTML = ""; renderImport();
+  } catch (e) {
+    if (e instanceof IMP.PdfPasswordError) { clearTimeout(tt); $("#toastRoot").innerHTML = ""; return askPdfPassword(e.wrong); }
+    toast((e && e.message) || "Dosya okunamadı.");
+  }
+}
+// okunan satırlardan içe aktarma önizlemesini kurar (ekransız da çalışır: Gmail otomatik içe aktarma)
+function setupImp(rows, file) {
     let hIdx = IMP.detectHeader(rows);
     if (hIdx < 0) hIdx = 0;
     const headers = (rows[hIdx] || []).map(h => String(h ?? "").trim());
@@ -1533,11 +1582,7 @@ async function readStatement(file, password) {
     Object.assign(imp, { fileName: file.name, rows, hIdx, headers, sig, map, fixOpening: false, unitFor: null, unitMode: null, tradeAcc: tradeAccDefault(acc(imp.accountId)) });
     imp.meta = rows.meta || null;
     if (imp.meta && isCredit(acc(imp.accountId))) { if (imp.meta.limit) imp.limit = imp.meta.limit; if (imp.meta.cutDay) imp.cut = imp.meta.cutDay; }
-    buildImpItems(); clearTimeout(tt); $("#toastRoot").innerHTML = ""; renderImport();
-  } catch (e) {
-    if (e instanceof IMP.PdfPasswordError) { clearTimeout(tt); $("#toastRoot").innerHTML = ""; return askPdfPassword(e.wrong); }
-    toast((e && e.message) || "Dosya okunamadı.");
-  }
+    buildImpItems();
 }
 function askPdfPassword(wrong) {
   openSheet("Şifreli PDF", `<form class="form" id="pdfPwForm" data-kind="pdfpw">
@@ -1725,7 +1770,7 @@ function impMapChanged() {
   }
   buildImpItems(); renderImport();
 }
-async function commitImport() {
+async function commitImport(silent) {
   const sel = imp.items.filter(x => x.sel), bi = impBalanceInfo();
   const code = accAsset(acc(imp.accountId)), batchId = uid8(), batchAt = new Date().toISOString();
   const txs = sel.map(x => { const [category, sub] = x.cat.split("|"); const t = { id: uid8(), type: x.type, amount: x.amt, date: x.date, category, sub: sub || "", accountId: imp.accountId, contactId: x.contactId || "", note: x.desc.slice(0, 140), importKey: x.key, importId: batchId, importFile: (imp.fileName || "").slice(0, 80), importAt: batchAt }; if (x.inst) t.inst = x.inst; if (code !== "TRY") { t.rate = x.price || rateOf(code); if (x.tl) t.tlAmount = x.tl; }
@@ -1764,6 +1809,7 @@ async function commitImport() {
     const rm = new Set(sel.map(x => x.replaceId).filter(Boolean)); S.txns = S.txns.filter(t => !rm.has(t.id));
     S.txns.push(...txs); if (fix != null) a.opening = fix; if (accUpd) Object.assign(a, accUpd); saveDemo(); render(); toast(`${txs.length} işlem eklendi${accUpd && accUpd.syncDate ? " · kalan limit sabitlendi" : ""}`);
   }
+  if (silent) { imp = null; render(); return true; }
   imp = null; closeSheet(); ui.tab = "islemler"; ls.set("kd-tab", "islemler"); render();
 }
 
@@ -1926,6 +1972,7 @@ document.addEventListener("click", async e => {
   if (a === "dc-apply") return dataCheckApply(false);
   if (a === "dc-ignore") return dataCheckApply(true);
   if (a === "gmail") { Gmail.load(); gmailPanel(); if (Gmail.valid() && !Gmail.list && !Gmail.busy) Gmail.search(ls.get("kd-gmail-q") || GMAIL_Q); return; }
+  if (a === "gmail-reauth") { if (await Gmail.authorize()) { GAuto.need = false; gmailAutoImport(true); } return; }
   if (a === "gmail-auth") { if (await Gmail.authorize()) { gmailPanel(); Gmail.search(ls.get("kd-gmail-q") || GMAIL_Q); } return; }
   if (a === "gmail-search") { const q = $("#gm-q").value.trim() || GMAIL_Q; ls.set("kd-gmail-q", q); return Gmail.search(q); }
   if (a === "gmail-reset-q") { ls.del("kd-gmail-q"); $("#gm-q").value = GMAIL_Q; return Gmail.search(GMAIL_Q); }
@@ -1995,6 +2042,7 @@ document.addEventListener("change", async e => {
   else if (e.target.id === "f-asset") { const code = e.target.value; $("#f-open-lbl").textContent = `Açılış bakiyesi (${amtUnit({ asset: code })})`; updateOpenConv(); }
   else if (e.target.id === "stmtFile") { const fs = [...(e.target.files || [])]; if (fs.length) readStatement(fs.length > 1 ? fs.filter(f => IMP.isImage(f)).length === fs.length ? fs : fs[0] : fs[0]); }
   else if (e.target.id === "imp-acc" && imp) { imp.accountId = e.target.value; }
+  else if (e.target.id === "gm-auto") { const on = e.target.checked; ls.set("kd-gmail-auto", on ? "1" : "0"); toast(on ? "Otomatik içe aktarma açık" : "Otomatik içe aktarma kapalı"); renderChips(); if (on) setTimeout(() => { closeSheet(); gmailAutoImport(true); }, 400); }
   else if (e.target.closest && e.target.closest("#impPanel")) {
     const t = e.target, i = t.dataset.i != null ? +t.dataset.i : -1;
     if (t.classList.contains("imp-sel")) { imp.items[i].sel = t.checked; renderImport(); }
@@ -2026,6 +2074,7 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
   window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => { }));
 }
 fetchRates(); setInterval(() => { if (!document.hidden) fetchRates(); }, 15 * 60e3);
-document.addEventListener("visibilitychange", () => { if (!document.hidden) fetchRates(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { fetchRates(); setTimeout(() => gmailAutoImport(), 1500); } });
+setInterval(() => { if (!document.hidden) gmailAutoImport(); }, 5 * 60e3);
 if (configured) renderLogin(); // Firebase yüklenirken giriş kartı (düğme pasif) görünür
 boot();
