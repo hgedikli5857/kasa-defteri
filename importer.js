@@ -505,3 +505,4 @@ const SUBRULES = [
 export function guessSub(desc) { const d = " " + norm(desc) + " "; for (const [s, keys] of SUBRULES) if (keys.some(x => d.includes(x))) return s; return ""; }
 export function headerSignature(headers) { return headers.map(norm).filter(Boolean).join("|").slice(0, 300); }
 export const _dbg = { linesToAppRows: (...a) => linesToAppRows(...a), pdfLines: (...a) => pdfLines(...a), linesToTable: (...a) => linesToTable(...a), linesToRegexRows: (...a) => linesToRegexRows(...a) };
+export const normText = s => norm(s);

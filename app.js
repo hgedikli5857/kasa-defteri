@@ -253,11 +253,13 @@ function accountGroups() {
 }
 const groupNames = () => [...new Set(S.accounts.map(groupOf).concat(KNOWN_BANKS.map(b => CANON[b] || b)))];
 const pending = () => S.plans.filter(p => p.status !== "tamam");
+const billLateN = () => { try { return billRows(TODAY.slice(0, 7)).filter(r => r.st === "late").length; } catch (e) { return 0; } };
 const recv = () => sum(pending().filter(p => p.dir === "tahsilat"), p => p.amount);
 const pay = () => sum(pending().filter(p => p.dir === "ödeme"), p => p.amount);
 function projection(days) {
   const pts = []; let bal = totalCash();
-  const pl = pending().slice().sort((a, b) => a.due < b.due ? -1 : 1); let i = 0;
+  const bl = []; { const m0 = TODAY.slice(0, 7); for (const m of [m0, mAdd(m0, 1), mAdd(m0, 2)]) for (const r of billRows(m)) if (!r.pay && r.exp) bl.push({ due: r.due < TODAY ? TODAY : r.due, dir: "ödeme", amount: r.exp }); }
+  const pl = pending().concat(bl).sort((a, b) => a.due < b.due ? -1 : 1); let i = 0;
   for (let d = 0; d <= days; d++) {
     const day = addDays(TODAY, d);
     while (i < pl.length && pl[i].due <= day) { bal += pl[i].dir === "tahsilat" ? pl[i].amount : -pl[i].amount; i++; }
@@ -335,6 +337,7 @@ async function boot() {
     mode = "loading"; S = emptyState(); showApp(); subscribe();
     Drive.init();
     setTimeout(() => gmailAutoImport(), 8000);
+    setTimeout(() => { syncReminders(); notifyDue(); }, 5000);
   });
 }
 function subscribe() {
@@ -404,7 +407,7 @@ async function importData(d, label) {
   return ok;
 }
 function snapshotData() {
-  return { app: "kasa-defteri", version: 1, savedAt: new Date().toISOString(), accounts: S.accounts.map(x => ({ ...x })), contacts: S.contacts.map(x => ({ ...x })), txns: S.txns.map(x => ({ ...x })), plans: S.plans.map(x => ({ ...x })) };
+  return { app: "kasa-defteri", version: 1, savedAt: new Date().toISOString(), accounts: S.accounts.map(x => ({ ...x })), contacts: S.contacts.map(x => ({ ...x })), txns: S.txns.map(x => ({ ...x })), plans: S.plans.map(x => ({ ...x })), bills: billsArr() };
 }
 
 /* ---------- Gmail'den ekstre (gmail.readonly, yalnızca okuma; izin sadece bu düğmeye basınca istenir) ---------- */
@@ -630,7 +633,7 @@ const Drive = {
 };
 
 /* ---------- render ---------- */
-const TABS = [["ozet", "Özet"], ["islemler", "İşlemler"], ["vadeler", "Vadeler"], ["hesaplar", "Hesaplar"], ["cariler", "Cariler"], ["raporlar", "Raporlar"]];
+const TABS = [["ozet", "Özet"], ["islemler", "İşlemler"], ["giderler", "Giderler"], ["vadeler", "Vadeler"], ["hesaplar", "Hesaplar"], ["cariler", "Cariler"], ["raporlar", "Raporlar"]];
 function showApp() { $("#loginRoot").hidden = true; $("#appRoot").hidden = false; render(); }
 const GLOGO = `<svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.3 0-9.7-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>`;
 function renderLogin(err) {
@@ -648,14 +651,14 @@ function render() {
   if ($("#appRoot").hidden) return;
   TODAY = iso(new Date());
   const overdue = pending().filter(p => p.due < TODAY).length;
-  $("#tabs").innerHTML = TABS.map(([k, l]) => `<button class="tab" role="tab" aria-selected="${ui.tab === k}" data-tab="${k}">${l}${k === "vadeler" && overdue ? `<span class="cnt">${overdue}</span>` : ""}</button>`).join("");
+  $("#tabs").innerHTML = TABS.map(([k, l]) => `<button class="tab" role="tab" aria-selected="${ui.tab === k}" data-tab="${k}">${l}${k === "vadeler" && overdue ? `<span class="cnt">${overdue}</span>` : ""}${k === "giderler" && billLateN() ? `<span class="cnt">${billLateN()}</span>` : ""}</button>`).join("");
   const np = totalCash() + recv() - pay();
   const npEl = $("#netpos"); npEl.textContent = mode === "loading" ? "—" : money(np); npEl.className = "num " + (np < 0 ? "neg" : "");
   renderNotice(); renderChips();
   const v = $("#view");
   if (mode === "loading") { v.innerHTML = `<section class="panel empty"><h3>Defterin yükleniyor</h3><p>Kayıtların getiriliyor…</p></section>`; return; }
   if (mode === "empty") { v.innerHTML = emptyView(); return; }
-  v.innerHTML = ({ ozet: viewOzet, islemler: viewIslemler, vadeler: viewVadeler, hesaplar: viewHesaplar, cariler: viewCariler, raporlar: viewRaporlar }[ui.tab] || viewOzet)();
+  v.innerHTML = ({ ozet: viewOzet, islemler: viewIslemler, giderler: viewGiderler, vadeler: viewVadeler, hesaplar: viewHesaplar, cariler: viewCariler, raporlar: viewRaporlar }[ui.tab] || viewOzet)();
   const qi = $("#fq"); if (qi && ui._focusQ) { qi.focus(); qi.setSelectionRange(qi.value.length, qi.value.length); ui._focusQ = false; }
 }
 function renderNotice() {
@@ -701,7 +704,7 @@ function viewOzet() {
   const overdue = pending().filter(x => x.due < TODAY);
   const kpi = (l, v, s, cls = "") => `<div class="panel kpi ${cls}"><div class="lbl">${l}</div><div class="val">${v}</div><div class="sub">${s}</div></div>`;
   const up = pending().filter(x => x.due <= addDays(TODAY, 14)).sort((a, b) => a.due < b.due ? -1 : 1);
-  return `${dataCheckNotice()}<section class="grid g-kpi">
+  return `${dataCheckNotice()}${remindersPanel()}<section class="grid g-kpi">
     ${kpi("Nakit ve banka", money(cash), S.accounts.some(isCash) ? `Nakit ${money0(cashTotal())} · Banka ${money0(cash - cashTotal())}` : `${S.accounts.length} hesap`, "hl")}
     ${kpi("Alacaklar", `<span class="pos">${money(r)}</span>`, `${pending().filter(x => x.dir === "tahsilat").length} bekleyen tahsilat`)}
     ${kpi("Borçlar", `<span class="neg">${money(p)}</span>`, `${pending().filter(x => x.dir === "ödeme").length} bekleyen ödeme`)}
@@ -1046,7 +1049,7 @@ function txnForm(t, presetType) {
   if (!S.accounts.length) { toast("Önce bir hesap ekle."); return accountForm(); }
   const type = t?.type || presetType || "gider";
   const accId = t?.accountId || ls.get("kd-last-acc") || S.accounts[0].id;
-  openSheet(t?.id ? "İşlemi düzenle" : "Yeni işlem", `<form class="form" id="frm" data-kind="txn" data-id="${esc(t?.id || "")}">
+  openSheet(t?.id ? "İşlemi düzenle" : "Yeni işlem", `<form class="form" id="frm" data-kind="txn" data-id="${esc(t?.id || "")}" data-bill="${esc(t?.billId ? t.billId + "|" + t.billMonth : "")}">
     <div class="seg" role="group" aria-label="İşlem türü">${["gelir", "gider", "transfer"].map(x => `<button type="button" data-ttype="${x}" aria-pressed="${type === x}">${x[0].toLocaleUpperCase("tr") + x.slice(1)}</button>`).join("")}</div>
     <input type="hidden" id="f-type" value="${type}">
     <div class="f2"><label>${type === "transfer" ? "Çıkış hesabı" : "Hesap"}<select id="f-acc">${accOpts(acc(accId) ? accId : S.accounts[0].id)}</select></label>
@@ -1298,6 +1301,154 @@ function spendingAnalysis() {
       </div>`;
     })()}
   </section>`;
+}
+
+
+/* ---------- sabit giderler (faturalar) ---------- */
+// Tanımlar meta belgesinde (users/{uid}.bills) tutulur; ödemeler normal gider işlemleridir (billId + billMonth) ya da ekstreden otomatik bulunur.
+const BILL_PRESETS = [
+  ["Elektrik", "Faturalar", "Elektrik", "ENERJISA|CK ENERJI|ELEKTRIK|BEDAS|AYEDAS|EPSAS|UEDAS|SEDAS|YEDAS|TOROSLAR|DICLE|CAMLIBEL|KCETAS|ENERJI"],
+  ["Doğalgaz", "Faturalar", "Doğalgaz", "DOGALGAZ|IGDAS|BASKENT ?GAZ|BASKENTGAZ|IZMIRGAZ|ESGAZ|GAZDAS|AKSA"],
+  ["Su", "Faturalar", "Su", "ASKI|ISKI|IZSU|BUSKI|SU IDARESI|SU FATURA"],
+  ["İnternet", "Faturalar", "İnternet", "TURKNET|TURK NET|SUPERONLINE|TTNET|TURK TELEKOM|VODAFONE NET|MILLENI"],
+  ["Telefon", "Faturalar", "Telefon", "TURKCELL|VODAFONE|TT MOBIL"],
+  ["Kira", "Kira", "", "KIRA"],
+  ["Aidat", "Faturalar", "", "AIDAT|YONETIM"],
+  ["Kredi taksiti", "Banka masrafı", "", "KREDI TAKSIT|TAKSIT TAHSIL"]
+];
+const billsArr = () => { if (live()) return (meta.bills || []).slice(); try { return JSON.parse(ls.get("kd-bills") || "[]"); } catch (e) { return []; } };
+function saveBills(arr) {
+  if (live()) { meta.bills = arr; fb.fs.setDoc(metaRef(), { bills: clean(arr) }, { merge: true }).catch(e => toast(failMsg(e))); Drive.dirty(); }
+  else ls.set("kd-bills", JSON.stringify(arr));
+  render(); syncReminders();
+}
+const mAdd = (m, n) => { const d = new Date(+m.slice(0, 4), +m.slice(5, 7) - 1 + n, 1); return iso(d).slice(0, 7); };
+const mDiff = (a, b) => (+b.slice(0, 4) - +a.slice(0, 4)) * 12 + (+b.slice(5, 7) - +a.slice(5, 7));
+function billDueIn(b, m) { // bu ay ödenecek mi?
+  if (b.active === false) return false;
+  if (b.start && m < b.start) return false;
+  if (b.freq === "yıllık") return +m.slice(5, 7) === (+b.month || 1);
+  if (b.freq === "2ay") return mDiff(b.start || m, m) % 2 === 0;
+  return true;
+}
+const billDue = (b, m) => { const dim = new Date(+m.slice(0, 4), +m.slice(5, 7), 0).getDate(); return `${m}-${p2(Math.min(+b.day || 1, dim))}`; };
+const billRx = b => { try { return b.match ? new RegExp(b.match, "i") : null; } catch (e) { return null; } };
+function billPayment(b, m) { // ödeme: bağlanmış işlem ya da ekstreden bulunan
+  const linked = S.txns.find(t => t.billId === b.id && t.billMonth === m); if (linked) return { t: linked, auto: false };
+  const rx = billRx(b), due = billDue(b, m), lo = b.freq === "aylık" || !b.freq ? m + "-01" : addDays(due, -31), hi = b.freq === "aylık" || !b.freq ? billDue({ day: 31 }, m) : addDays(due, 31);
+  const c = S.txns.filter(t => t.type === "gider" && !t.billId && !isMove(t) && t.date >= lo && t.date <= hi &&
+    ((rx && rx.test(IMP.normText(t.note || ""))) || (b.sub && t.sub === b.sub && t.category === b.cat)));
+  if (!c.length) return null;
+  c.sort((x, y) => Math.abs(diffDays(x.date, due)) - Math.abs(diffDays(y.date, due)));
+  return { t: c[0], auto: true };
+}
+function billExpected(b, m) {
+  if (+b.amount > 0) return +b.amount;
+  for (let i = 1; i <= 6; i++) { const p = billPayment(b, mAdd(m, -i)); if (p) return p.t.amount; }
+  return 0;
+}
+function billRows(m) {
+  return billsArr().filter(b => billDueIn(b, m)).map(b => {
+    const pay = billPayment(b, m), due = billDue(b, m), exp = billExpected(b, m);
+    const st = pay ? "paid" : due >= TODAY ? "wait" : due >= addDays(TODAY, -45) && m >= (b.created || "").slice(0, 7) ? "late" : "none"; // çok eski aylarda kayıt yoksa gecikme sayma
+    return { b, m, pay, due, exp, st, left: diffDays(TODAY, due) };
+  }).sort((x, y) => (x.st === "paid") - (y.st === "paid") || (x.due < y.due ? -1 : 1));
+}
+function defaultPayAcc() { // son 60 günde en çok gider yapılan TL hesabı
+  const c = {}; S.txns.filter(t => t.type === "gider" && t.date >= addDays(TODAY, -60) && accAsset(acc(t.accountId)) === "TRY").forEach(t => { c[t.accountId] = (c[t.accountId] || 0) + 1; });
+  return Object.entries(c).sort((a, b) => b[1] - a[1])[0]?.[0] || (S.accounts.find(a => accAsset(a) === "TRY") || S.accounts[0])?.id;
+}
+const billIcon = n => ({ "Elektrik": "⚡", "Doğalgaz": "🔥", "Su": "💧", "İnternet": "🌐", "Telefon": "📱", "Kira": "🏠", "Aidat": "🏢", "Kredi taksiti": "🏦" })[n] || "🧾";
+function calUrl(b) {
+  const m = TODAY.slice(0, 7), d0 = billDue(b, billDueIn(b, m) && billDue(b, m) >= TODAY ? m : mAdd(m, b.freq === "yıllık" ? 0 : 1)).replace(/-/g, ""), d1 = addDays(billDue(b, m), 1).replace(/-/g, "");
+  const rr = b.freq === "yıllık" ? "RRULE:FREQ=YEARLY" : b.freq === "2ay" ? `RRULE:FREQ=MONTHLY;INTERVAL=2;BYMONTHDAY=${b.day}` : `RRULE:FREQ=MONTHLY;BYMONTHDAY=${b.day}`;
+  return "https://calendar.google.com/calendar/render?action=TEMPLATE&text=" + encodeURIComponent(`${b.name} son ödeme`) + "&dates=" + d0 + "/" + addDays(`${d0.slice(0, 4)}-${d0.slice(4, 6)}-${d0.slice(6)}`, 1).replace(/-/g, "") + "&details=" + encodeURIComponent("Kasa Defteri hatırlatması" + (+b.amount ? ` · tahmini ${money(b.amount)}` : "")) + "&recur=" + encodeURIComponent(rr);
+}
+function viewGiderler() {
+  const m = ui.billMonth || TODAY.slice(0, 7), rows = billRows(m), all = billsArr();
+  const tot = sum(rows, r => r.pay ? r.pay.t.amount : r.exp), paid = sum(rows.filter(r => r.pay), r => r.pay.t.amount), left = sum(rows.filter(r => !r.pay && r.st !== "none"), r => r.exp), late = rows.filter(r => r.st === "late").length;
+  const used = new Set(all.map(b => b.name));
+  const nperm = "Notification" in window ? Notification.permission : "yok";
+  const row = r => { const b = r.b, a = acc((r.pay && r.pay.t.accountId) || b.accountId);
+    const pill = r.st === "none" ? `<span class="pill">kayıt yok</span>` : r.st === "paid" ? `<span class="pill pos">Ödendi${r.pay.auto ? " · ekstreden" : ""}</span>` : r.st === "late" ? `<span class="pill neg">${-r.left} gün gecikti</span>` : `<span class="pill ${r.left <= (+b.remind || 3) ? "warn" : ""}">${r.left === 0 ? "Bugün" : r.left + " gün kaldı"}</span>`;
+    return `<div class="row" style="align-items:center">
+      <div class="click" data-bill-edit="${esc(b.id)}" style="cursor:pointer;min-width:0;display:flex;gap:10px;align-items:center"><span style="font-size:1.4rem" aria-hidden="true">${billIcon(b.name)}</span>
+        <div style="min-width:0"><div class="t">${esc(b.name)} ${pill}</div>
+        <div class="m">Son ödeme ${dshort(r.due)}${r.pay ? ` · ödendi ${dshort(r.pay.t.date)}${a ? " · " + esc(accName(a)) : ""}` : a ? " · " + esc(accName(a)) : ""}</div></div></div>
+      <div style="text-align:right;display:grid;gap:4px;justify-items:end">
+        <div class="amt ${r.st === "late" ? "neg" : ""}">${r.pay ? money(r.pay.t.amount) : r.exp ? `<span class="muted" style="font-weight:400;font-size:.8rem">≈</span> ${money(r.exp)}` : `<span class="muted">tutar ?</span>`}</div>
+        ${r.pay ? (r.pay.auto ? "" : `<button class="btn small ghost" data-edit-txn="${esc(r.pay.t.id)}" style="padding:2px 6px">Ödemeyi aç</button>`) : `<button class="btn small primary" data-bill-pay="${esc(b.id)}|${m}">Öde</button>`}</div></div>`; };
+  return `<section class="panel"><div class="ph"><div><h2>Sabit giderler</h2><p>Faturalar ve her ay tekrar eden ödemeler</p></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="notif">${nperm === "granted" ? "🔔 Bildirimler açık" : "🔔 Bildirimleri aç"}</button><button class="btn primary" data-act="bill-new">+ Gider ekle</button></div></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:4px 0 12px">
+      <button class="btn small" data-bill-month="${mAdd(m, -1)}" aria-label="Önceki ay">‹</button><b style="font-size:1.05rem">${mfmtL.format(pd(m + "-01"))}</b><button class="btn small" data-bill-month="${mAdd(m, 1)}" aria-label="Sonraki ay">›</button></div>
+    <div class="grid g-kpi" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr))">
+      <div class="kpi" style="padding:4px 0"><div class="lbl">Bu ay toplam</div><div class="val">${money(tot)}</div></div>
+      <div class="kpi" style="padding:4px 0"><div class="lbl">Ödenen</div><div class="val pos">${money(paid)}</div></div>
+      <div class="kpi" style="padding:4px 0"><div class="lbl">Kalan</div><div class="val ${left ? "neg" : ""}">${money(left)}</div></div>
+      <div class="kpi" style="padding:4px 0"><div class="lbl">Geciken</div><div class="val ${late ? "neg" : ""}">${late}</div></div></div>
+    <div class="list" style="margin-top:10px">${rows.map(row).join("") || `<p class="muted">${all.length ? "Bu ay ödenecek sabit gider yok." : "Henüz sabit gider eklemedin. Aşağıdan hızlıca ekleyebilirsin."}</p>`}</div>
+    ${BILL_PRESETS.some(p => !used.has(p[0])) ? `<div style="margin-top:14px"><div class="dhead" style="padding-left:0"><span>Hızlı ekle</span></div><div style="display:flex;gap:8px;flex-wrap:wrap">${BILL_PRESETS.filter(p => !used.has(p[0])).map(p => `<button class="btn small" data-bill-preset="${esc(p[0])}">${billIcon(p[0])} ${esc(p[0])}</button>`).join("")}</div></div>` : ""}
+    <p class="small-note" style="margin-top:12px">Ekstreden gelen ödemeler (ör. "Başkent Gaz Doğalgaz") otomatik "Ödendi" sayılır. Elle ödediğinde <b>Öde</b>'ye bas. ${nperm === "granted" ? "Son ödeme gününden önce bildirim gelir." : "Hatırlatma için bildirimleri aç ya da gideri düzenleyip <b>Google Takvim'e ekle</b>."}</p></section>`;
+}
+function billForm(b, preset) {
+  const P = preset ? BILL_PRESETS.find(x => x[0] === preset) : null;
+  b = b || (P ? { name: P[0], cat: P[1], sub: P[2], match: P[3], day: 15, freq: "aylık", remind: 3 } : { day: 15, freq: "aylık", remind: 3 });
+  const catSel = b.cat ? b.cat + (b.sub ? "|" + b.sub : "") : "Faturalar";
+  openSheet(b.id ? "Sabit gideri düzenle" : "Yeni sabit gider", `<form class="form" id="frm" data-kind="bill" data-id="${esc(b.id || "")}">
+    <div class="f2"><label>Ad<input id="b-name" required value="${esc(b.name || "")}" placeholder="Örn. Elektrik"></label>
+    <label>Kategori<select id="b-cat">${impCatOptions("gider", catSel)}</select></label></div>
+    <div class="f2"><label>Son ödeme günü (ayın kaçı)<input id="b-day" type="number" min="1" max="31" required value="${esc(b.day || 15)}"></label>
+    <label>Tahmini tutar (₺)<input id="b-amount" inputmode="decimal" value="${amtStr(b.amount)}" placeholder="Boşsa son ödemeden"></label></div>
+    <div class="f2"><label>Sıklık<select id="b-freq">${opt([["aylık", "Her ay"], ["2ay", "2 ayda bir"], ["yıllık", "Yılda bir"]], b.freq || "aylık")}</select></label>
+    <label id="b-month-row" ${b.freq === "yıllık" ? "" : "hidden"}>Hangi ay<select id="b-month">${opt([...Array(12)].map((_, i) => [String(i + 1), mfmtL.format(new Date(2026, i, 1)).split(" ")[0]]), String(b.month || 1))}</select></label></div>
+    <div class="f2"><label>Ödeme hesabı<select id="b-acc"><option value="">— seçme —</option>${accOpts(b.accountId)}</select></label>
+    <label>Hatırlatma<select id="b-remind">${opt([["0", "Son ödeme günü"], ["1", "1 gün önce"], ["3", "3 gün önce"], ["5", "5 gün önce"], ["7", "1 hafta önce"]], String(b.remind ?? 3))}</select></label></div>
+    <label>Ekstrede tanıma kelimeleri <span class="muted" style="font-weight:400">(| ile ayır)</span><input id="b-match" value="${esc(b.match || "")}" placeholder="Örn. BASKENT GAZ|DOGALGAZ"></label>
+    <p class="small-note" style="margin:0">Banka ekstresinde bu kelimeler geçen ödeme o ay için "Ödendi" sayılır.</p>
+    ${b.id ? `<a class="btn" href="${esc(calUrl(b))}" target="_blank" rel="noopener" style="justify-content:center">📅 Google Takvim'e ekle (her ay hatırlatır)</a>` : ""}
+    <div class="foot">${b.id ? `<button type="button" class="btn danger" data-act="bill-del" data-id="${esc(b.id)}">Sil</button>` : "<span></span>"}<div class="r"><button type="button" class="btn" data-close>Vazgeç</button><button class="btn primary" type="submit">Kaydet</button></div></div></form>`);
+}
+
+/* ---------- hatırlatma ve bildirimler ---------- */
+// Yaklaşan ödemeler: sabit giderler + bekleyen vadeler. Uygulama açılınca bildirim; telefonda (yüklü uygulama) arka planda periyodik kontrol.
+function collectReminders(days = 45) {
+  const out = [], m0 = TODAY.slice(0, 7);
+  for (const m of [mAdd(m0, -1), m0, mAdd(m0, 1), mAdd(m0, 2)]) for (const r of billRows(m)) {
+    if (r.pay || r.st === "none" || r.due > addDays(TODAY, days)) continue;
+    out.push({ key: "b:" + r.b.id + ":" + m, due: r.due, from: addDays(r.due, -(+r.b.remind || 0)), title: `${r.b.name} son ödeme ${r.due === TODAY ? "bugün" : dshort(r.due)}`, body: `${r.exp ? "Tahmini " + money(r.exp) + ". " : ""}${r.due < TODAY ? "Gecikti!" : "Ödemeyi unutma."}`, url: "./?tab=giderler" });
+  }
+  for (const p of pending()) { if (p.due > addDays(TODAY, days)) continue; const c = con(p.contactId);
+    out.push({ key: "p:" + p.id + ":" + p.due, due: p.due, from: addDays(p.due, -3), title: `${p.dir === "tahsilat" ? "Tahsilat" : "Ödeme"}: ${c ? c.name : (p.note || p.category)} · ${dshort(p.due)}`, body: money(p.amount), url: "./?tab=vadeler" }); }
+  return out.sort((a, b) => a.due < b.due ? -1 : 1);
+}
+const dueReminders = () => collectReminders().filter(r => r.from <= TODAY);
+async function syncReminders() {
+  try { const c = await caches.open("kd-data"); await c.put(new URL("kd-reminders.json", location.href).href, new Response(JSON.stringify({ at: TODAY, items: collectReminders(60) }), { headers: { "content-type": "application/json" } })); } catch (e) { }
+}
+async function notifyDue() {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  let sent = {}; try { sent = JSON.parse(ls.get("kd-notified") || "{}"); } catch (e) { }
+  const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
+  for (const r of dueReminders()) {
+    const k = r.key + "@" + TODAY; if (sent[k]) continue; sent[k] = 1;
+    try { if (reg) await reg.showNotification(r.title, { body: r.body, tag: r.key, icon: "icons/icon-192.png", badge: "icons/icon-192.png", data: { url: r.url } }); else new Notification(r.title, { body: r.body, tag: r.key }); } catch (e) { }
+  }
+  const keep = {}; Object.keys(sent).filter(k => k.slice(-10) >= addDays(TODAY, -3)).forEach(k => { keep[k] = 1; }); ls.set("kd-notified", JSON.stringify(keep));
+  try { const c = await caches.open("kd-data"), u = new URL("kd-notified.json", location.href).href, r = await c.match(u), cur = r ? await r.json() : {}; await c.put(u, new Response(JSON.stringify({ ...cur, ...keep }), { headers: { "content-type": "application/json" } })); } catch (e) { }
+}
+async function enableNotifications() {
+  if (!("Notification" in window)) { toast("Bu tarayıcı bildirim desteklemiyor. Google Takvim'e ekle seçeneğini kullan."); return; }
+  const p = await Notification.requestPermission();
+  if (p !== "granted") { toast("Bildirim izni verilmedi. Tarayıcı ayarlarından açabilirsin."); render(); return; }
+  await syncReminders();
+  try { const reg = await navigator.serviceWorker.ready; if (reg.periodicSync) await reg.periodicSync.register("kd-reminders", { minInterval: 12 * 3600e3 }); } catch (e) { }
+  toast("Bildirimler açık"); render(); notifyDue();
+}
+function remindersPanel() {
+  const due = dueReminders(); if (!due.length) return "";
+  return `<section class="panel" style="border-left:3px solid var(--warn)"><div class="ph"><div><h2>🔔 Hatırlatmalar</h2><p>${due.length} ödeme yaklaşıyor ya da gecikti</p></div><button class="btn small" data-tab="giderler">Giderler</button></div>
+    <div class="list">${due.slice(0, 6).map(r => `<div class="row"><div><div class="t ${r.due < TODAY ? "neg" : ""}">${esc(r.title)}</div><div class="m">${esc(r.body)}</div></div><div class="amt ${r.due < TODAY ? "neg" : ""}" style="font-size:.85rem">${r.due < TODAY ? `${-diffDays(TODAY, r.due)} gün gecikti` : r.due === TODAY ? "bugün" : diffDays(TODAY, r.due) + " gün"}</div></div>`).join("")}</div></section>`;
 }
 
 /* --- veri kontrolü: analizi bozan kayıtlar --- */
@@ -1860,7 +2011,8 @@ function submitForm(f) {
     }
     ls.set("kd-last-acc", o.accountId);
     const old = S.txns.find(x => x.id === id); if (old && old.planId) o.planId = old.planId;
-    if (old) for (const k of ["importKey", "importId", "importFile", "importAt", "importAcc", "tlAmount"]) if (old[k] != null && o[k] == null) o[k] = old[k]; // ekstre bağlantısı korunur
+    if (old) for (const k of ["importKey", "importId", "importFile", "importAt", "importAcc", "tlAmount", "billId", "billMonth"]) if (old[k] != null && o[k] == null) o[k] = old[k];
+    if (f.dataset.bill) { const [bi, bm] = f.dataset.bill.split("|"); o.billId = bi; o.billMonth = bm; } // ekstre bağlantısı korunur
     put("txns", o); toast(id ? "İşlem güncellendi" : "İşlem kaydedildi"); closeSheet();
     if (old && o.type !== "transfer" && (old.category !== o.category || (old.sub || "") !== (o.sub || ""))) setTimeout(() => offerBulk(o, old.category), 60);
   } else if (kind === "plan") {
@@ -1868,6 +2020,13 @@ function submitForm(f) {
     const c = resolveCat(f, v("#f-dir")); if (!c) { toast("Yeni kategorinin adını yaz."); return; }
     const o = { ...(old || {}), id: id || uid8(), dir: v("#f-dir"), amount: parseAmt(v("#f-amount")), due: v("#f-due"), contactId: v("#f-con"), category: c.category, sub: c.sub, repeat: v("#f-rep"), note: v("#f-note"), status: old?.status || "bekliyor" };
     put("plans", o); toast(id ? "Vade güncellendi" : "Vade eklendi"); closeSheet();
+  } else if (kind === "bill") {
+    const [c, sb = ""] = v("#b-cat").split("|"), day = Math.min(31, Math.max(1, parseInt(v("#b-day"), 10) || 1));
+    const arr = billsArr(), old = arr.find(x => x.id === id) || {};
+    const o = { ...old, id: id || uid8(), name: v("#b-name"), cat: c, sub: sb, day, amount: parseAmt(v("#b-amount")) || 0, freq: v("#b-freq"), month: +v("#b-month") || 1, accountId: v("#b-acc"), remind: +v("#b-remind") || 0, match: v("#b-match"), start: old.start || mAdd(TODAY.slice(0, 7), -12), created: old.created || TODAY };
+    if (!o.name) { toast("Ad gir."); return; }
+    const i = arr.findIndex(x => x.id === o.id); if (i >= 0) arr[i] = o; else arr.push(o);
+    saveBills(arr); toast(id ? "Güncellendi" : `${o.name} eklendi`); closeSheet(); return;
   } else if (kind === "gmacc") {
     const P = ui.gmailPending; if (!P) return; const accId = v("#gm-acc");
     try { const m = JSON.parse(ls.get("kd-gmail-acc") || "{}"); m[P.pat] = accId; ls.set("kd-gmail-acc", JSON.stringify(m)); } catch (e) { }
@@ -1964,6 +2123,11 @@ document.addEventListener("click", async e => {
     toast(k === "excl" ? (val ? `${name}: toplamlara dahil edilmiyor` : `${name}: toplamlara dahil`) : (val ? `${name}: Özet'te gizlendi` : `${name}: Özet'te gösteriliyor`)); return;
   }
   if (d.gmailMsg) return gmailOpen(d.gmailMsg, d.gmailAtt, d.gmailName);
+  if (d.billMonth) { ui.billMonth = d.billMonth; return render(); }
+  if (d.billEdit) return billForm(billsArr().find(b => b.id === d.billEdit));
+  if (d.billPreset) return billForm(null, d.billPreset);
+  if (d.billPay) { const [bid, m] = d.billPay.split("|"), b = billsArr().find(x => x.id === bid); if (!b) return;
+    return txnForm({ type: "gider", amount: billExpected(b, m) || "", accountId: (acc(b.accountId) && b.accountId) || defaultPayAcc(), category: b.cat, sub: b.sub, note: `${b.name} · ${mfmtL.format(pd(m + "-01"))}`, date: TODAY, billId: b.id, billMonth: m }, "gider"); }
   if (d.planFor) { planForm({ contactId: d.planFor, dir: "tahsilat" }); return; }
   if (el.id === "addBtn") return newMenu();
   const a = d.act; if (!a) return;
@@ -1992,6 +2156,9 @@ document.addEventListener("click", async e => {
   if (a === "rates-all") { ui.ratesAll = !ui.ratesAll; return ratesPanel(); }
   if (a === "import-stmt") return openImport(imp && imp.accountId);
   if (a === "data-check") return dataCheckPanel();
+  if (a === "bill-new") return billForm();
+  if (a === "notif") return enableNotifications();
+  if (a === "bill-del") { if (el.dataset.armed !== "1") { el.dataset.armed = "1"; el.textContent = "Silmeyi onayla"; return; } saveBills(billsArr().filter(b => b.id !== el.dataset.id)); toast("Silindi"); return closeSheet(); }
   if (a === "dc-apply") return dataCheckApply(false);
   if (a === "dc-ignore") return dataCheckApply(true);
   if (a === "gmail") { Gmail.load(); gmailPanel(); if (Gmail.valid() && !Gmail.list && !Gmail.busy) Gmail.search(ls.get("kd-gmail-q") || GMAIL_Q); return; }
@@ -2066,6 +2233,7 @@ document.addEventListener("change", async e => {
   else if (e.target.id === "f-asset") { const code = e.target.value; $("#f-open-lbl").textContent = `Açılış bakiyesi (${amtUnit({ asset: code })})`; updateOpenConv(); }
   else if (e.target.id === "stmtFile") { const fs = [...(e.target.files || [])]; if (fs.length) readStatement(fs.length > 1 ? fs.filter(f => IMP.isImage(f)).length === fs.length ? fs : fs[0] : fs[0]); }
   else if (e.target.id === "imp-acc" && imp) { imp.accountId = e.target.value; }
+  else if (e.target.id === "b-freq") { $("#b-month-row").hidden = e.target.value !== "yıllık"; }
   else if (e.target.id === "gm-auto") { const on = e.target.checked; ls.set("kd-gmail-auto", on ? "1" : "0"); toast(on ? "Otomatik içe aktarma açık" : "Otomatik içe aktarma kapalı"); renderChips(); if (on) setTimeout(() => { closeSheet(); gmailAutoImport(true); }, 400); }
   else if (e.target.closest && e.target.closest("#impPanel")) {
     const t = e.target, i = t.dataset.i != null ? +t.dataset.i : -1;
@@ -2098,7 +2266,7 @@ if ("serviceWorker" in navigator && location.protocol !== "file:") {
   window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => { }));
 }
 fetchRates(); setInterval(() => { if (!document.hidden) fetchRates(); }, 15 * 60e3);
-document.addEventListener("visibilitychange", () => { if (!document.hidden) { fetchRates(); setTimeout(() => gmailAutoImport(), 1500); } });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { fetchRates(); setTimeout(() => gmailAutoImport(), 1500); setTimeout(() => { syncReminders(); notifyDue(); }, 2500); } });
 setInterval(() => { if (!document.hidden) gmailAutoImport(); }, 5 * 60e3);
 if (configured) renderLogin(); // Firebase yüklenirken giriş kartı (düğme pasif) görünür
 boot();

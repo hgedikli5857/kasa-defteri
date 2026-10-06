@@ -131,6 +131,13 @@ Kart hesabını düzenle (veya ekstre içe aktarırken) şu dört alanı bankan�
 - **Kart özeti:** Dönem içi harcamalara yalnızca o ayın taksiti girer; kalanlar "Gelecek dönem taksitleri" satırında görünür. Kartı düzenle ekranında **Devam eden taksitler** listesi vardır.
 - **Harcama analizi** ve aylık grafik taksitleri aylara böler.
 
+## Giderler (sabit giderler) ve hatırlatmalar
+**Giderler** sekmesi: Elektrik, Doğalgaz, Su, İnternet, Telefon, Kira, Aidat… "Hızlı ekle" ile ya da **+ Gider ekle** ile tanımla (son ödeme günü, tahmini tutar, sıklık, ödeme hesabı, hatırlatma).
+- Ay ay **Ödendi / Bekliyor / Gecikti** durumu, toplam-ödenen-kalan.
+- Ekstrede tanıma kelimeleri geçen ödeme (ör. "ENERJISA", "BASKENT GAZ") otomatik **Ödendi** sayılır. Elle ödediysen **Öde** ile işlem olarak kaydet.
+- Tahmini tutar boşsa son ödemeden alınır; ödenmemiş giderler nakit akışı tahminine eklenir.
+- **Hatırlatma:** Özet'in üstünde 🔔 Hatırlatmalar. **Bildirimleri aç** ile telefon bildirimi: uygulama açılınca, yüklü uygulamada (Android/Chrome) arka planda günde birkaç kez kontrol. Kesin zamanlı hatırlatma için gideri düzenle → **Google Takvim'e ekle** (her ay tekrarlayan etkinlik).
+
 ## Gmail'den ekstre (isteğe bağlı)
 Bankanın e-postayla gönderdiği ekstreleri indirmeden içe aktarmak için. Uygulama Gmail'i **sadece okur** (`gmail.readonly`).
 
