@@ -265,7 +265,11 @@ export function statementMeta(text) {
   const T = norm(text), num = re => { const m = T.match(re); return m ? parseAmount(m[1]) : null; };
   const meta = { limit: num(/KART LIMITI\s*(?:\(TL\))?\s*:?\s*([\d.,]+)/), debt: num(/DONEM BORCU\s*(?:\(TL\))?\s*:?\s*([\d.,]+)/) };
   const c = T.match(/(?<!SONRAKI )HESAP KESIM TARIHI\s*:?\s*(\d{1,2})[\s./-]/); if (c && +c[1] >= 1 && +c[1] <= 31) meta.cutDay = +c[1];
-  return meta.limit || meta.cutDay || meta.debt ? meta : null;
+  meta.minPay = num(/ASGARI ODEME(?: TUTARI)?\s*(?:\(TL\))?\s*:?\s*([\d.,]+)/);
+  const DT = "(\\d{1,2}[./-]\\d{1,2}[./-]\\d{4}|\\d{1,2}\\s+[A-Z]+\\s+\\d{4})";
+  const dd = T.match(new RegExp("(?<!SONRAKI )SON ODEME TARIHI\\s*:?\\s*" + DT)); if (dd) meta.dueDate = parseDate(dd[1]);
+  const cd = T.match(new RegExp("(?<!SONRAKI )HESAP KESIM TARIHI\\s*:?\\s*" + DT)); if (cd) meta.stmtDate = parseDate(cd[1]);
+  return meta.limit || meta.cutDay || meta.debt || meta.minPay ? meta : null;
 }
 // Ekstrenin hangi hesaba/karta ait olduğunu gösteren kimlikler: IBAN, hesap no-ek no, kartın son 4 hanesi
 export function statementIds(text, fileName) {

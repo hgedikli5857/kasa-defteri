@@ -894,12 +894,34 @@ function cardSummary(a) {
   const instAct = own.filter(t => instN(t) && addMonths(t.date, instN(t) - 1) > end).length;
   return { ...L, spent, future, instAct, prev: Math.max(0, Math.round((L.used - spent - future) * 100) / 100), start, cut, nextCut, end, synced };
 }
+// Ekstre borcu, asgari ödeme, son ödeme: ekstreden/elle girilen değer; yoksa kesim gününe göre tahmin
+function cardDue(a, C) {
+  C = C || cardSummary(a); if (!C) return null;
+  const rate = (+a.limit || 0) > 50000 ? 0.4 : 0.2; // BDDK: limiti 50 bin TL üstü kartlarda asgari %40, altı %20 (tahmin için)
+  let debt, min, due, date, est = false;
+  if (a.stmtDate && (!C.cut || a.stmtDate >= addDays(C.cut, -3))) { debt = +a.stmtDebt || 0; min = a.minPay != null && a.minPay !== "" ? +a.minPay : debt * rate; due = a.dueDate || addDays(a.stmtDate, 10); date = a.stmtDate; }
+  else if (C.cut) { est = true; date = C.cut; due = addDays(C.cut, 10); debt = null; }
+  else return null;
+  // kesimden sonra karta yapılan ödemeler
+  const paid = sum(S.txns.filter(t => t.date > date && ((t.type === "transfer" && t.toAccountId === a.id) || (t.type === "gelir" && t.accountId === a.id))), t => t.type === "transfer" ? (t.toAmount ?? t.amount) : t.amount);
+  if (est) { debt = Math.max(0, C.prev + paid); min = debt * rate; }
+  const rest = Math.max(0, Math.round((debt - paid) * 100) / 100), minRest = Math.max(0, Math.round((min - paid) * 100) / 100);
+  return { debt, min, due, paid, rest, minRest, est, rate, left: diffDays(TODAY, due) };
+}
 function cardSummaryHtml(a) {
   const C = cardSummary(a); if (!C) return "";
   return `<div class="csum">
     <div class="csum-2"><div><div class="lbl">Kullanılabilir limit</div><div class="big" style="color:${C.col}">${money(C.avail)}</div></div>
       <div><div class="lbl">Dönem içi harcamalar</div><div class="big">${money(C.spent)}</div></div></div>
     <div style="height:8px;background:var(--surface-2);border-radius:4px;overflow:hidden"><div style="width:${(C.pct * 100).toFixed(1)}%;height:100%;background:${C.col}"></div></div>
+    ${(() => { const D = cardDue(a, C); if (!D || D.debt < 0.01) return "";
+      const done = D.rest < 0.01, late = !done && D.left < 0, col = done ? "var(--pos)" : late ? "var(--neg)" : D.left <= 3 ? "var(--warn)" : "var(--ink)";
+      return `<div style="border:1px solid var(--line);border-radius:10px;padding:10px;display:grid;gap:6px;background:var(--surface-2)">
+        <div class="csum-2"><div><div class="lbl">${D.est ? "Ekstre borcu (tahmini)" : "Ekstre borcu"}</div><div class="big" style="font-size:1.05rem">${D.est ? "≈ " : ""}${money(done ? D.debt : D.rest)}</div></div>
+          <div><div class="lbl">${D.est ? "Asgari ödeme (tahmini)" : "Asgari ödeme"}</div><div class="big" style="font-size:1.05rem;color:${done ? "var(--pos)" : "var(--warn)"}">${D.est ? "≈ " : ""}${money(D.minRest)}</div></div></div>
+        <div style="display:flex;justify-content:space-between;gap:8px;font-size:.84rem"><span class="muted">Son ödeme ${D.est ? "≈ " : ""}${dshort(D.due)}</span><b style="color:${D.est && late ? "var(--muted)" : col}">${done ? "Ödendi ✓" : late && D.est ? "tarih geçti · ekstreyi yükle" : late ? `${-D.left} gün gecikti` : D.left === 0 ? "Bugün!" : D.left + " gün kaldı"}</b></div>
+        ${D.paid >= 0.01 && !done ? `<div class="muted" style="font-size:.78rem">Kesimden sonra ${money(D.paid)} ödendi</div>` : ""}
+        ${D.est ? `<div class="muted" style="font-size:.74rem">Ekstre yükleyince ya da kartı düzenleyip girince kesinleşir. Asgari oran %${Math.round(D.rate * 100)} varsayıldı.</div>` : ""}</div>`; })()}
     <div class="csum-rows">
       <span>Toplam borç</span><b class="num">${money(C.used)}</b>
       ${C.future >= 0.01 ? `<span>Gelecek dönem taksitleri${C.instAct ? ` (${C.instAct} alışveriş)` : ""}</span><b class="num">${money(C.future)}</b>` : ""}
@@ -1121,6 +1143,9 @@ function accountForm(a) {
       <label>Bankadaki güncel kalan limit (₺)<input id="f-avail" inputmode="decimal" placeholder="Örn. 37.253,42"></label></div>
       <div class="f2"><label>Dönem içi harcamalar (₺)<input id="f-spent" inputmode="decimal" placeholder="Örn. 48.534,82"></label>
       <label>Hesap kesim günü<input id="f-cut" inputmode="numeric" value="${a && a.cutDay ? a.cutDay : ""}" placeholder="Ayın kaçı? Örn. 15"></label></div>
+      <div class="f2"><label>Son ekstre borcu (₺)<input id="f-sdebt" inputmode="decimal" value="${a && a.stmtDebt ? amtStr(a.stmtDebt) : ""}" placeholder="Ekstredeki dönem borcu"></label>
+      <label>Asgari ödeme (₺)<input id="f-minpay" inputmode="decimal" value="${a && a.minPay ? amtStr(a.minPay) : ""}" placeholder="Boşsa hesaplanır"></label></div>
+      <label>Son ödeme tarihi<input id="f-due" type="date" value="${esc(a?.dueDate || "")}"></label>
       <p class="small-note" style="margin:0" id="f-avail-hint">Kalan limiti bankanın uygulamasından bakıp yazarsan, borç buna göre eşitlenir. Ekstreden gelen tutarlarla oluşan farklar böylece düzelir.</p>
     </div>
     ${a && isCredit(a) ? instListHtml(a) : ""}
@@ -1418,6 +1443,9 @@ function collectReminders(days = 45) {
     if (r.pay || r.st === "none" || r.due > addDays(TODAY, days)) continue;
     out.push({ key: "b:" + r.b.id + ":" + m, due: r.due, from: addDays(r.due, -(+r.b.remind || 0)), title: `${r.b.name} son ödeme ${r.due === TODAY ? "bugün" : dshort(r.due)}`, body: `${r.exp ? "Tahmini " + money(r.exp) + ". " : ""}${r.due < TODAY ? "Gecikti!" : "Ödemeyi unutma."}`, url: "./?tab=giderler" });
   }
+  for (const a of S.accounts.filter(x => isCredit(x) && limitInfo(x))) { const D = cardDue(a); if (!D || D.rest < 0.01 || D.due > addDays(TODAY, days) || D.due < addDays(TODAY, -20)) continue;
+    if (D.est && (D.left < 0 || !a.limitSyncAt || a.limitSyncAt.slice(0, 10) < addDays(D.due, -10))) continue; // tahmin güvenilir değilse uyarma
+    out.push({ key: "k:" + a.id + ":" + D.due, due: D.due, from: addDays(D.due, -3), title: `${accName(a)} son ödeme ${D.due === TODAY ? "bugün" : dshort(D.due)}`, body: `Asgari ${money(D.minRest)} · ekstre borcu ${money(D.rest)}${D.est ? " (tahmini)" : ""}`, url: "./?tab=hesaplar" }); }
   for (const p of pending()) { if (p.due > addDays(TODAY, days)) continue; const c = con(p.contactId);
     out.push({ key: "p:" + p.id + ":" + p.due, due: p.due, from: addDays(p.due, -3), title: `${p.dir === "tahsilat" ? "Tahsilat" : "Ödeme"}: ${c ? c.name : (p.note || p.category)} · ${dshort(p.due)}`, body: money(p.amount), url: "./?tab=vadeler" }); }
   return out.sort((a, b) => a.due < b.due ? -1 : 1);
@@ -1889,7 +1917,7 @@ function renderImport() {
       <label>Bankadaki güncel kalan limit (₺)<input id="imp-avail" inputmode="decimal" value="${imp.avail != null ? amtStr(imp.avail) : ""}" placeholder="Örn. 37.253,42"></label></div>
       <div class="f2"><label>Dönem içi harcamalar (₺)<input id="imp-spent" inputmode="decimal" value="${imp.spent != null && !isNaN(imp.spent) ? amtStr(imp.spent) : ""}" placeholder="Örn. 48.534,82"></label>
       <label>Hesap kesim günü<input id="imp-cut" inputmode="numeric" value="${imp.cut || acc(imp.accountId).cutDay || ""}" placeholder="Örn. 15"></label></div>
-      ${imp.meta && (imp.meta.limit || imp.meta.cutDay || imp.meta.debt != null) ? `<p class="small-note" style="margin:0;color:var(--pos)">Ekstreden okundu: ${[imp.meta.limit ? "kart limiti " + money0(imp.meta.limit) : "", imp.meta.cutDay ? "kesim günü " + imp.meta.cutDay : "", imp.meta.debt != null ? "dönem borcu " + money(imp.meta.debt) : ""].filter(Boolean).join(" · ")}</p>` : ""}
+      ${imp.meta && (imp.meta.limit || imp.meta.cutDay || imp.meta.debt != null) ? `<p class="small-note" style="margin:0;color:var(--pos)">Ekstreden okundu: ${[imp.meta.limit ? "kart limiti " + money0(imp.meta.limit) : "", imp.meta.cutDay ? "kesim günü " + imp.meta.cutDay : "", imp.meta.debt != null ? "dönem borcu " + money(imp.meta.debt) : "", imp.meta.minPay != null ? "asgari " + money(imp.meta.minPay) : "", imp.meta.dueDate ? "son ödeme " + dshort(imp.meta.dueDate) : ""].filter(Boolean).join(" · ")}</p>` : ""}
       <p class="small-note" style="margin:0">Yazarsan kartın borcu bankadaki rakama sabitlenir; ekstredeki geçmiş harcamalar limiti ikinci kez düşürmez, sadece analizde kullanılır.</p></div>` : ""}
     ${bi && !isCredit(acc(imp.accountId)) ? `<div class="notice ${Math.abs(bi.diff) < 0.01 ? "" : "warn"}" style="margin:0"><span>${Math.abs(bi.diff) < 0.01 ? `<b>Bakiye tutuyor.</b> Bankadaki bakiye (${dshort(bi.date)}) ile uygulamadaki bakiye aynı: <b class="num">${fmtAsset(bi.bank, IC)}</b>` : `<b>Bakiye farkı var.</b> Bankada <b class="num">${fmtAsset(bi.bank, IC)}</b>, içe aktarma sonrası uygulamada <b class="num">${fmtAsset(bi.after, IC)}</b> olacak (fark ${IC === "TRY" ? signed(bi.diff) : fmtAsset(bi.diff, IC)}).<br><label style="display:flex;gap:8px;align-items:center;margin-top:6px;color:var(--ink);font-size:.9rem"><input type="checkbox" id="imp-fix" style="width:auto" ${imp.fixOpening ? "checked" : ""}> Açılış bakiyesini düzelterek eşitle (${fmtAsset((+acc(imp.accountId).opening || 0) + bi.diff, IC)})</label>`}</span></div>` : ""}
     ${impAnalysis(sel)}
@@ -1954,6 +1982,10 @@ async function commitImport(silent) {
     if (L > 0 || ($("#imp-avail")?.value && A >= 0)) {
       accUpd = { ...a, limit: L > 0 ? L : (+a.limit || 0) };
       if ($("#imp-avail")?.value && A >= 0 && accUpd.limit > 0) Object.assign(accUpd, creditAnchor(a.id, accUpd.limit, A));
+    }
+    const M = imp.meta;
+    if (M && M.debt != null && (M.stmtDate || M.dueDate) && (!a.stmtDate || (M.stmtDate || "") >= a.stmtDate)) { // ekstredeki dönem borcu, asgari, son ödeme
+      accUpd = accUpd || { ...a }; Object.assign(accUpd, { stmtDebt: M.debt, stmtDate: M.stmtDate || TODAY, dueDate: M.dueDate || addDays(M.stmtDate || TODAY, 10) }); if (M.minPay != null) accUpd.minPay = M.minPay; else delete accUpd.minPay;
     }
     const SP = parseAmt($("#imp-spent")?.value), CD = parseInt($("#imp-cut")?.value, 10);
     if (($("#imp-spent")?.value && SP >= 0) || (CD >= 1 && CD <= 31)) {
@@ -2039,6 +2071,11 @@ function submitForm(f) {
       o.limit = limit > 0 ? limit : 0;
       for (const k of ["syncBal", "syncDate", "syncIds", "limitSyncAt", "syncSpent", "spentDate", "spentIds"]) if (old[k] != null) o[k] = old[k];
       const cd = parseInt(v("#f-cut"), 10); o.cutDay = cd >= 1 && cd <= 31 ? cd : 0;
+      for (const k of ["stmtDebt", "minPay", "dueDate", "stmtDate"]) if (old[k] != null) o[k] = old[k];
+      const sd = parseAmt(v("#f-sdebt")), mp = parseAmt(v("#f-minpay")), du = v("#f-due");
+      if (v("#f-sdebt") !== "" && sd >= 0 && (sd !== +old.stmtDebt || !old.stmtDate)) { o.stmtDebt = sd; o.stmtDate = o.cutDay ? lastCut(o.cutDay) : TODAY; }
+      if (v("#f-minpay") !== "" && mp >= 0) o.minPay = mp; else if (v("#f-minpay") === "") delete o.minPay;
+      if (du) { o.dueDate = du; if (!o.stmtDate && o.stmtDebt) o.stmtDate = o.cutDay ? lastCut(o.cutDay) : TODAY; }
       const sp = parseAmt(v("#f-spent")); if (v("#f-spent") !== "" && sp >= 0) Object.assign(o, spentAnchor(o.id), { syncSpent: sp });
       if (limit > 0 && avail >= 0 && v("#f-avail") !== "") {
         Object.assign(o, creditAnchor(o.id, limit, avail));

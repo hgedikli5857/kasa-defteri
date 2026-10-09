@@ -131,6 +131,9 @@ Kart hesabını düzenle (veya ekstre içe aktarırken) şu dört alanı bankan�
 - **Kart özeti:** Dönem içi harcamalara yalnızca o ayın taksiti girer; kalanlar "Gelecek dönem taksitleri" satırında görünür. Kartı düzenle ekranında **Devam eden taksitler** listesi vardır.
 - **Harcama analizi** ve aylık grafik taksitleri aylara böler.
 
+## Ekstre borcu ve asgari ödeme
+Kart kutusunda **Ekstre borcu, Asgari ödeme, Son ödeme tarihi** (kaç gün kaldı) görünür. Ekstre PDF'i yüklenince bu değerler ekstreden okunur; ya da kartı düzenleyip elle girersin. Hiçbiri yoksa kesim gününe göre **tahmini** gösterilir (asgari: limit 50 bin TL üstü %40, altı %20). Kesimden sonra karta yapılan ödemeler düşülür; son ödemeden 3 gün önce hatırlatma gelir.
+
 ## Giderler (sabit giderler) ve hatırlatmalar
 **Giderler** sekmesi: Elektrik, Doğalgaz, Su, İnternet, Telefon, Kira, Aidat… "Hızlı ekle" ile ya da **+ Gider ekle** ile tanımla (son ödeme günü, tahmini tutar, sıklık, ödeme hesabı, hatırlatma).
 - Ay ay **Ödendi / Bekliyor / Gecikti** durumu, toplam-ödenen-kalan.
