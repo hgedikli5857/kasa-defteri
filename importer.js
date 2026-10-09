@@ -412,7 +412,7 @@ export function parseAmount(v, qty) {
 export function ownMove(desc, surname) {
   const n = norm(desc || "");
   const m = n.match(/GONDEREN HESAP NO\s*:?\s*(\d+).*ALICI HESAP NO\s*:?\s*(\d+)/); if (m && m[1] === m[2]) return "kendi alt hesapların arası";
-  if (/KREDI KARTI BORC ODEME|KREDI KARTI NO\s*:|\bK\.\s?KART\b|KART BORCU? ODEME/.test(n)) return "kredi kartı ödemesi";
+  if (/^\s*KREDI KARTI BORC\s*$|KREDI KARTI BORC ODEME|KREDI KARTI NO\s*:|\bK\.\s?KART\b|KART BORCU? ODEME/.test(n)) return "kredi kartı ödemesi";
   if (/YATIRIM HESABI(NDAN|NA)|PORTFOY NOLU/.test(n)) return "yatırım hesabı aktarımı";
   if (/KATEM BES|BES KATKI|BIREYSEL EMEKLILIK|EMEKLILIK KATKI|\bBES\b.{0,12}(KATKI|ODEME|TAHSILAT)/.test(n)) return "BES katkı payı (birikim)";
   if (/ATM.{0,25}(NAKIT YATIRMA|PARA CEKME)|(NAKIT YATIRMA|PARA CEKME).{0,25}ATM/.test(n)) return "ATM (nakit ↔ banka)";

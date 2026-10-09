@@ -178,6 +178,9 @@ Varsayılan dönem **Son 30 gün**dür (ayın başında bile tam bir aylık tabl
 - **Hesaplara göre:** her hesabın toplam gideri ve en çok hangi kategoriye harcandığı; dokununca o hesap analiz edilir.
 - Kategoriler (yüksekten düşüğe, önceki döneme göre ▲▼), en çok harcanan yerler, en büyük 5 harcama, düzenli ödemeler/abonelikler, tanınmayan harcamalar (yerinde kategori seçimi), verisi eksik hesaplar, ay sonu tahmini ve uyarılar.
 
+## Raporlar
+Özet'teki gibi: dönem tarihli (30 gün varsayılan; bu ay, geçen ay, 3 ay, 6 ay, bu yıl, tümü) ve aynı hesap filtresi. Gelir, gider, net, tasarruf oranı ve günlük ortalama; önceki dönemle karşılaştırma (▲▼), son 12 ayın gelir-gider çubukları, kategori bazında önceki döneme göre değişim, hesaplara göre dağılım, en büyük harcamalar ve cariler. CSV indir seçili dönem ve hesaplarla çalışır.
+
 ## Favori hesaplar ve hesap detayı
 Hesaplar'da kartın sağ üstündeki **☆** ile hesap favorilere eklenir; favoriler sayfanın en üstünde toplanır. Bir hesaba dokununca **hesap detayı** açılır: bakiye, kart özeti, dönem seçimi (30 gün / bu ay / geçen ay / 3 ay / tümü), giriş-çıkış toplamı, **en çok hangi kategoriye harcandığı** ve o hesabın işlemleri (arama, giriş/çıkış filtresi). Düzenlemek için **Düzenle**.
 

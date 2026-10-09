@@ -110,7 +110,7 @@ let S = emptyState();
 let mode = "loading"; // loading | demo | signedout | live | empty
 let fb = null, db = null, auth = null, user = null, meta = {};
 const unsubs = [];
-const ui = { tab: new URLSearchParams(location.search).get("tab") || ls.get("kd-tab") || "ozet", q: "", ftype: "", facc: "", planView: "bekliyor", period: "bu-ay", anScope: ls.get("kd-anscope") || "all", anSel: (() => { try { return JSON.parse(ls.get("kd-ansel") || "[]"); } catch (e) { return []; } })(), anPeriod: ls.get("kd-anper") || "", accView: null, accPer: "30-gun", accQ: "", accType: "" };
+const ui = { tab: new URLSearchParams(location.search).get("tab") || ls.get("kd-tab") || "ozet", q: "", ftype: "", facc: "", planView: "bekliyor", period: ls.get("kd-repper") || "30-gun", anScope: ls.get("kd-anscope") || "all", anSel: (() => { try { return JSON.parse(ls.get("kd-ansel") || "[]"); } catch (e) { return []; } })(), anPeriod: ls.get("kd-anper") || "", accView: null, accPer: "30-gun", accQ: "", accType: "" };
 
 const acc = id => S.accounts.find(a => a.id === id);
 const con = id => S.contacts.find(c => c.id === id);
@@ -1021,37 +1021,96 @@ function catBars(list, color) {
     return subs.length ? `<details><summary style="list-style:none;cursor:pointer">${bar}</summary><div style="display:grid;gap:4px;margin:6px 0 8px 14px;font-size:.84rem">${subs.map(([s, v]) => `<div style="display:flex;justify-content:space-between;gap:8px"><span class="muted">${esc(s)}</span><span class="num">${money0(v)}</span></div>`).join("")}${rest > 0.5 ? `<div style="display:flex;justify-content:space-between;gap:8px"><span class="muted">Alt kategorisiz</span><span class="num">${money0(rest)}</span></div>` : ""}</div></details>` : bar;
   }).join("")}</div>`;
 }
+// Raporlar dönemi: Özet'teki gibi tarihli; karşılaştırma aynı uzunluktaki önceki dönemle
+function repRange(k) {
+  const d = pd(TODAY), y = d.getFullYear(), m = d.getMonth();
+  const prevOf = (a, b) => { const n = diffDays(a, b) + 1; return { pa: addDays(a, -n), pb: addDays(a, -1) }; };
+  let a, b = TODAY, lbl, cmp = "önceki dönem";
+  if (k === "bu-ay") { a = iso(new Date(y, m, 1)); lbl = "Bu ay"; const pa = iso(new Date(y, m - 1, 1)); return { a, b, lbl, pa, pb: addDays(pa, d.getDate() - 1), cmp: "geçen ayın aynı günleri" }; }
+  if (k === "gecen-ay") return { a: iso(new Date(y, m - 1, 1)), b: iso(new Date(y, m, 0)), lbl: "Geçen ay", pa: iso(new Date(y, m - 2, 1)), pb: iso(new Date(y, m - 1, 0)), cmp: "bir önceki ay" };
+  if (k === "3-ay") { a = iso(new Date(y, m - 2, 1)); lbl = "Son 3 ay"; }
+  else if (k === "6-ay") { a = iso(new Date(y, m - 5, 1)); lbl = "Son 6 ay"; }
+  else if (k === "yil") { a = iso(new Date(y, 0, 1)); lbl = "Bu yıl"; return { a, b, lbl, pa: iso(new Date(y - 1, 0, 1)), pb: addDays(TODAY, -365), cmp: "geçen yılın aynı dönemi" }; }
+  else if (k === "tumu") return { a: "0000-01-01", b: "9999-12-31", lbl: "Tüm kayıtlar", pa: null, pb: null, cmp: "" };
+  else { a = addDays(TODAY, -29); lbl = "Son 30 gün"; cmp = "önceki 30 gün"; }
+  return { a, b, lbl, ...prevOf(a, b), cmp };
+}
+const REP_P = [["30-gun", "30 gün"], ["bu-ay", "Bu ay"], ["gecen-ay", "Geçen ay"], ["3-ay", "3 ay"], ["6-ay", "6 ay"], ["yil", "Bu yıl"], ["tumu", "Tümü"]];
+const repPer = () => REP_P.some(([k]) => k === ui.period) ? ui.period : "30-gun";
 function viewRaporlar() {
-  const [a, b, lbl] = periodRange(ui.period);
-  const tx = S.txns.filter(t => t.date >= a && t.date <= b && !isMove(t));
+  const per = repPer(), R = repRange(per), SC = scopeAccs(), inS = t => !SC || SC.has(t.accountId);
+  const ALL = spreadTx(S.txns.filter(t => t.type !== "transfer" && inS(t))); // taksitler aylara bölünür, hesaplar arası hariç
+  const inR = (t, a, b) => t.date >= a && t.date <= b;
+  const tx = ALL.filter(t => inR(t, R.a, R.b)), ptx = R.pa ? ALL.filter(t => inR(t, R.pa, R.pb)) : [];
   const inc = tx.filter(t => t.type === "gelir"), exp = tx.filter(t => t.type === "gider");
   const I = sum(inc, txTRY), E = sum(exp, txTRY), N = I - E, rate = I ? Math.round(N / I * 100) : 0;
-  const months = [...new Set(tx.map(t => monthKey(t.date)))].sort();
-  const top = {}; tx.forEach(t => { if (t.contactId && t.type !== "transfer") top[t.contactId] = (top[t.contactId] || 0) + (t.type === "gelir" ? txTRY(t) : -txTRY(t)); });
+  const PI = sum(ptx.filter(t => t.type === "gelir"), txTRY), PE = sum(ptx.filter(t => t.type === "gider"), txTRY);
+  const first = ALL.reduce((m, t) => t.date < m ? t.date : m, "9999"), lastD = per === "tumu" ? ALL.reduce((m, t) => t.date > m ? t.date : m, "") : R.b;
+  const nDays = per === "tumu" ? (first < "9999" ? diffDays(first, lastD) + 1 : 1) : diffDays(R.a, R.b) + 1;
+  const hasPrev = R.pa && ALL.some(t => t.date <= R.pb && t.date >= addDays(R.pa, -45));
+  const ch = (v, p, inv) => { if (!hasPrev || !(p > 0)) return ""; const c = (v - p) / p, bad = inv ? c < -0.1 : c > 0.1, good = inv ? c > 0.1 : c < -0.1; return ` · <span class="${bad ? "neg" : good ? "pos" : "muted"}">${c >= 0 ? "▲" : "▼"} %${Math.abs(Math.round(c * 100))}</span>`; };
+  const kpi = (l, v, sub, cls = "") => `<div class="kpi" style="padding:4px 0"><div class="lbl">${l}</div><div class="val ${cls}">${v}</div><div class="sub">${sub}</div></div>`;
+  // kategori karşılaştırma
+  const catCmp = (type, color) => {
+    const cur = {}, prv = {}, cnt = {};
+    tx.filter(t => t.type === type).forEach(t => { const k = t.category || "Diğer"; cur[k] = (cur[k] || 0) + txTRY(t); cnt[k] = (cnt[k] || 0) + 1; });
+    ptx.filter(t => t.type === type).forEach(t => { const k = t.category || "Diğer"; prv[k] = (prv[k] || 0) + txTRY(t); });
+    const tot = sum(Object.values(cur), x => x), arr = Object.entries(cur).sort((x, y) => y[1] - x[1]); if (!arr.length) return `<p class="muted">Bu dönemde kayıt yok.</p>`;
+    const mx = arr[0][1];
+    return arr.map(([k, v], i) => { const p = prv[k] || 0, c = hasPrev && p > 0 ? (v - p) / p : null;
+      return `<div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 10px;padding:8px 0;border-top:1px solid var(--line)">
+        <div style="min-width:0"><b ${i === 0 ? `style="color:${color}"` : ""}>${esc(k)}</b> <span class="muted" style="font-size:.78rem">%${Math.round(v / tot * 100)} · ${cnt[k]} işlem</span></div>
+        <div class="num" style="text-align:right;font-weight:${i < 3 ? 600 : 400}">${money(v)}</div>
+        <div style="grid-column:1/-1;height:7px;background:var(--surface-2);border-radius:4px;overflow:hidden"><div style="width:${(v / mx * 100).toFixed(1)}%;height:100%;background:${color};opacity:${i < 3 ? 1 : .6}"></div></div>
+        ${hasPrev ? `<div class="muted" style="font-size:.76rem;grid-column:1/-1;text-align:right">${R.cmp}: ${p ? money0(p) : "yok"}${c != null ? ` <span class="${(type === "gider" ? c > 0.1 : c < -0.1) ? "neg" : (type === "gider" ? c < -0.1 : c > 0.1) ? "pos" : "muted"}">${c >= 0 ? "▲" : "▼"} %${Math.abs(Math.round(c * 100))}</span>` : p ? "" : ` <span class="muted">yeni</span>`}</div>` : ""}</div>`; }).join("");
+  };
+  // aylık trend: son 12 ay (seçili dönemin ayları vurgulu)
+  const ms = (() => { const out = [], d = pd(TODAY); for (let i = 11; i >= 0; i--) out.push(iso(new Date(d.getFullYear(), d.getMonth() - i, 1)).slice(0, 7)); return out; })()
+    .map(m => ({ m, i: sum(ALL.filter(t => t.type === "gelir" && monthKey(t.date) === m), txTRY), e: sum(ALL.filter(t => t.type === "gider" && monthKey(t.date) === m), txTRY) })).filter((x, k, arr) => x.i || x.e || arr.slice(0, k).some(y => y.i || y.e));
+  const mMax = Math.max(1, ...ms.map(x => Math.max(x.i, x.e))), withData = ms.filter(x => x.e > 0 && x.m < TODAY.slice(0, 7)), avgE = withData.length ? sum(withData, x => x.e) / withData.length : 0;
+  const inPer = m => per === "tumu" || (m + "-31" >= R.a && m + "-01" <= R.b);
+  // hesaplara göre
+  const byAcc = {}; tx.forEach(t => { const o = byAcc[t.accountId] = byAcc[t.accountId] || { i: 0, e: 0, c: {} }; if (t.type === "gelir") o.i += txTRY(t); else { o.e += txTRY(t); const k = t.category || "Diğer"; o.c[k] = (o.c[k] || 0) + txTRY(t); } });
+  const accArr = Object.entries(byAcc).filter(([id]) => acc(id)).sort((x, y) => y[1].e - x[1].e);
+  const top = {}; tx.forEach(t => { if (t.contactId) top[t.contactId] = (top[t.contactId] || 0) + (t.type === "gelir" ? txTRY(t) : -txTRY(t)); });
   const topArr = Object.entries(top).sort((x, y) => Math.abs(y[1]) - Math.abs(x[1])).slice(0, 6);
-  const P = [["bu-ay", "Bu ay"], ["gecen-ay", "Geçen ay"], ["3-ay", "Son 3 ay"], ["yil", "Bu yıl"], ["tumu", "Tümü"]];
+  const big = exp.slice().sort((x, y) => txTRY(y) - txTRY(x)).slice(0, 8);
   const twoCol = `grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr))`;
-  return `<section class="panel"><div class="ph"><div><h2>Gelir tablosu · ${lbl}</h2><p>${a === "0000-01-01" ? "Tüm kayıtlar" : `${dshort(a)} – ${dshort(b)}`} · ${tx.length} işlem</p></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap"><div class="seg" role="group" aria-label="Dönem">${P.map(([k, l]) => `<button data-period="${k}" aria-pressed="${ui.period === k}">${l}</button>`).join("")}</div>
-    <button class="btn" data-act="cats">Kategoriler</button><button class="btn" data-act="csv">CSV indir</button></div></div>
-    <div class="grid g-kpi">
-      <div class="kpi" style="padding:4px 0"><div class="lbl">Gelir</div><div class="val pos">${money(I)}</div></div>
-      <div class="kpi" style="padding:4px 0"><div class="lbl">Gider</div><div class="val neg">${money(E)}</div></div>
-      <div class="kpi" style="padding:4px 0"><div class="lbl">Net kâr / zarar</div><div class="val ${N < 0 ? "neg" : ""}">${signed(N)}</div></div>
-      <div class="kpi" style="padding:4px 0"><div class="lbl">Kâr marjı</div><div class="val ${rate < 0 ? "neg" : ""}">%${rate}</div><div class="sub">Net ÷ gelir</div></div>
-    </div></section>
+  return `<section class="panel"><div class="ph" style="align-items:flex-start"><div style="min-width:0"><h2>Rapor</h2>
+      <p><b>${esc(scopeLabel())}</b> · ${R.lbl}${per === "tumu" ? "" : `: <b>${dshort(R.a)} – ${dshort(R.b)}</b> (${nDays} gün)`} · ${tx.length} işlem</p></div>
+    <div style="display:grid;gap:6px;justify-items:end;max-width:100%">${scopeSelect()}
+      <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><button class="btn small" data-act="cats">Kategoriler</button><button class="btn small" data-act="csv">CSV indir</button></div></div></div>
+    <div class="seg" role="group" aria-label="Dönem" style="margin-bottom:10px;flex-wrap:wrap">${REP_P.map(([k, l]) => `<button type="button" data-period="${k}" aria-pressed="${per === k}">${l}</button>`).join("")}</div>
+    ${SC && !SC.size ? `<div class="notice warn" style="margin:0 0 10px"><span>${ui.anScope === "fav" ? "Henüz favori hesabın yok. Hesaplar'da ☆ işaretine dokun." : "Seçili hesap bulunamadı."}</span><button class="btn small" data-an-scope="all">Tüm hesaplar</button></div>` : ""}
+    <div class="grid g-kpi" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">
+      ${kpi("Gelir", money0(I), `${inc.length} işlem${ch(I, PI, true)}`, "pos")}
+      ${kpi("Gider", money0(E), `${exp.length} işlem${ch(E, PE)}`, "neg")}
+      ${kpi("Net", signed(N).replace(/,\d\d$/, ""), N < 0 ? "harcama gelirden fazla" : "kenara kalan", N < 0 ? "neg" : "pos")}
+      ${kpi("Tasarruf oranı", I ? `${rate < 0 ? "−" : ""}%${Math.abs(rate)}` : "—", I ? "net ÷ gelir" : "gelir kaydı yok", rate < 0 ? "neg" : "")}
+      ${kpi("Günlük ortalama gider", money0(E / nDays), `aylık hızı ≈ ${money0(E / nDays * 30)}`)}
+      ${hasPrev ? kpi(`Karşılaştırma`, money0(PE), `${esc(R.cmp)} gideri`) : ""}
+    </div>
+    <p class="small-note" style="margin:6px 0 0">Kendi hesapların arasındaki aktarımlar (Hesaplar arası) dahil değil; taksitli alışverişler aylara bölünerek sayılır. Filtre Özet'teki analizle ortaktır.</p></section>
+  <section class="panel"><div class="ph"><div><h2>Aylık gelir ve gider</h2><p>Son 12 ay${avgE ? ` · tamamlanan aylarda ortalama gider <b>${money0(avgE)}</b>` : ""}</p></div>
+    <div class="legend"><span><i style="background:var(--pos)"></i>Gelir</span><span><i style="background:var(--neg)"></i>Gider</span></div></div>
+    ${ms.length ? ms.slice().reverse().map(x => `<div style="display:grid;grid-template-columns:88px minmax(0,1fr) auto;gap:4px 10px;align-items:center;padding:7px 0;border-top:1px solid var(--line);${inPer(x.m) ? "" : "opacity:.55"}">
+      <span style="font-size:.86rem">${mfmt.format(pd(x.m + "-01"))} ${x.m.slice(0, 4)}${x.m === TODAY.slice(0, 7) ? ` <span class="muted" style="font-size:.72rem">(${pd(TODAY).getDate()} gün)</span>` : ""}</span>
+      <div style="display:grid;gap:3px"><div style="height:7px;width:${(x.i / mMax * 100).toFixed(1)}%;background:var(--pos);border-radius:3px"></div><div style="height:7px;width:${(x.e / mMax * 100).toFixed(1)}%;background:var(--neg);border-radius:3px"></div></div>
+      <span class="num" style="text-align:right;font-size:.84rem"><span class="pos">${money0(x.i)}</span><br><span class="neg">${money0(x.e)}</span> · <b class="${x.i - x.e < 0 ? "neg" : ""}">${signed(x.i - x.e).replace(/,\d\d$/, "")}</b></span></div>`).join("") : `<p class="muted">Kayıt yok.</p>`}</section>
   <section class="grid g-2" style="${twoCol}">
-    <div class="panel"><div class="ph"><h2>Giderler kategoriye göre</h2></div>${catBars(exp, "var(--neg)")}</div>
-    <div class="panel"><div class="ph"><h2>Gelirler kategoriye göre</h2></div>${catBars(inc, "var(--pos)")}</div>
+    <div class="panel"><div class="ph"><div><h2>Giderler kategoriye göre</h2><p>${hasPrev ? `${esc(R.cmp)} ile karşılaştırmalı` : ""}</p></div></div>${catCmp("gider", "var(--neg)")}</div>
+    <div class="panel"><div class="ph"><h2>Gelirler kategoriye göre</h2></div>${catCmp("gelir", "var(--pos)")}</div>
   </section>
   <section class="grid g-2" style="${twoCol}">
-    <div class="panel"><div class="ph"><h2>Aylık özet</h2></div><div class="tbl-wrap"><table><thead><tr><th>Ay</th><th class="r">Gelir</th><th class="r">Gider</th><th class="r">Net</th></tr></thead><tbody>
-    ${months.map(m => { const i = sum(tx.filter(t => t.type === "gelir" && monthKey(t.date) === m), txTRY), e = sum(tx.filter(t => t.type === "gider" && monthKey(t.date) === m), txTRY); return `<tr><td>${mfmtL.format(pd(m + "-01"))}</td><td class="r num pos">${money(i)}</td><td class="r num neg">${money(e)}</td><td class="r num ${i - e < 0 ? "neg" : ""}">${signed(i - e)}</td></tr>`; }).join("") || `<tr><td colspan="4" class="muted">Kayıt yok.</td></tr>`}
-    </tbody></table></div></div>
-    <div class="panel"><div class="ph"><h2>Carilere göre hareket</h2></div><div class="list">
-    ${topArr.map(([id, v]) => { const c = con(id); return `<div class="row"><div class="t">${esc(c ? c.name : "Silinmiş cari")}</div><div class="amt ${v < 0 ? "neg" : "pos"}">${signed(v)}</div></div>`; }).join("") || `<p class="muted">Bu dönemde cariye bağlı işlem yok.</p>`}
-    </div></div>
-  </section>`;
+    <div class="panel"><div class="ph"><div><h2>Hesaplara göre</h2><p>dokun: o hesabı filtrele</p></div></div><div class="list">
+      ${accArr.map(([id, o]) => { const a = acc(id), cs = Object.entries(o.c).sort((x, y) => y[1] - x[1]), tc = cs.find(([k]) => !/^Diğer/.test(k)) || cs[0];
+        return `<div class="row click" data-rep-scope="${esc(id)}" style="display:block;padding:9px 2px"><div style="display:flex;justify-content:space-between;gap:8px"><span class="t" style="min-width:0">${a.fav ? "⭐ " : ""}${esc(accName(a))}</span><span class="num"><span class="neg">−${money0(o.e)}</span>${o.i ? ` · <span class="pos">+${money0(o.i)}</span>` : ""}</span></div>
+          <div class="m">${o.e ? `%${Math.round(o.e / (E || 1) * 100)} gider${tc ? ` · en çok <b style="color:var(--ink)">${esc(tc[0])}</b> ${money0(tc[1])}` : ""}` : "gider yok"}</div></div>`; }).join("") || `<p class="muted">Bu dönemde kayıt yok.</p>`}</div></div>
+    <div class="panel"><div class="ph"><h2>En büyük harcamalar</h2></div><div class="list">
+      ${big.map(t => `<div class="row click" data-edit-txn="${esc(t.instOf || t.id)}" style="padding:8px 2px"><div style="min-width:0"><div class="t" style="font-size:.9rem">${esc(payee(t.note) || catLabel(t))}</div><div class="m">${dshort(t.date)} · ${esc(catLabel(t))} · ${esc(accName(acc(t.accountId)) || "")}${t.instK ? ` · ${t.instK}/${instN(t)}. taksit` : ""}</div></div><div class="amt neg">${money(txTRY(t))}</div></div>`).join("") || `<p class="muted">Gider yok.</p>`}</div></div>
+  </section>
+  ${topArr.length ? `<section class="panel"><div class="ph"><h2>Carilere göre hareket</h2></div><div class="list">
+    ${topArr.map(([id, v]) => { const c = con(id); return `<div class="row click" data-show-contact="${esc(id)}"><div class="t">${esc(c ? c.name : "Silinmiş cari")}</div><div class="amt ${v < 0 ? "neg" : "pos"}">${signed(v)}</div></div>`; }).join("")}</div></section>` : ""}`;
 }
 function saveFile(name, text, type) {
   const url = URL.createObjectURL(new Blob([text], { type }));
@@ -1059,8 +1118,8 @@ function saveFile(name, text, type) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 function exportCsv() {
-  const [a, b, lbl] = periodRange(ui.period);
-  const tx = S.txns.filter(t => t.date >= a && t.date <= b).sort((x, y) => x.date < y.date ? -1 : 1);
+  const R = repRange(repPer()), a = R.a, b = R.b, SC = scopeAccs(), lbl = R.lbl + (SC ? " " + scopeLabel() : "");
+  const tx = S.txns.filter(t => t.date >= a && t.date <= b && (!SC || SC.has(t.accountId) || SC.has(t.toAccountId))).sort((x, y) => x.date < y.date ? -1 : 1);
   const q = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
   const lines = [["Tarih", "Tür", "Tutar", "Birim", "TL karşılığı", "Kategori", "Alt kategori", "Hesap", "Hedef hesap", "Cari", "Not"].map(q).join(";")];
   const nc = n => String(Math.round(n * 1000) / 1000).replace(".", ",");
@@ -2308,7 +2367,7 @@ window.addEventListener("offline", renderChips);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && iso(new Date()) !== TODAY) render(); });
 
 document.addEventListener("click", async e => {
-  const el = e.target.closest("button,[data-edit-txn],[data-edit-plan],[data-edit-account],[data-open-account],[data-show-contact],[data-batch],.overlay");
+  const el = e.target.closest("button,[data-edit-txn],[data-edit-plan],[data-edit-account],[data-open-account],[data-an-scope],[data-rep-scope],[data-show-contact],[data-batch],.overlay");
   if (!el) return;
   if (el.id === "ov" && e.target === el) return closeSheet();
   const d = el.dataset;
@@ -2327,7 +2386,8 @@ document.addEventListener("click", async e => {
   }
   if (d.pdir) { $("#f-dir").value = d.pdir; el.parentNode.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", b === el)); const w = $("#f-catwrap"); if (w) w.innerHTML = catFields(d.pdir); return; }
   if (d.pv) { ui.planView = d.pv; return render(); }
-  if (d.period) { ui.period = d.period; return render(); }
+  if (d.period) { ui.period = d.period; ls.set("kd-repper", d.period); return render(); }
+  if (d.repScope) { setScope(d.repScope); return render(); }
   if (d.complete) { const p = S.plans.find(x => x.id === d.complete); if (p) completeForm(p); return; }
   if (d.editTxn) { const t = S.txns.find(x => x.id === d.editTxn); if (t) txnForm(t); return; }
   if (d.editPlan) { const p = S.plans.find(x => x.id === d.editPlan); if (p) planForm(p); return; }
