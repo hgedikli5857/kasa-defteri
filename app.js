@@ -110,7 +110,7 @@ let S = emptyState();
 let mode = "loading"; // loading | demo | signedout | live | empty
 let fb = null, db = null, auth = null, user = null, meta = {};
 const unsubs = [];
-const ui = { tab: new URLSearchParams(location.search).get("tab") || ls.get("kd-tab") || "ozet", q: "", ftype: "", facc: "", planView: "bekliyor", period: ls.get("kd-repper") || "30-gun", anScope: ls.get("kd-anscope") || "all", anSel: (() => { try { return JSON.parse(ls.get("kd-ansel") || "[]"); } catch (e) { return []; } })(), anPeriod: ls.get("kd-anper") || "", accView: null, accPer: "30-gun", accQ: "", accType: "" };
+const ui = { tab: new URLSearchParams(location.search).get("tab") || ls.get("kd-tab") || "ozet", q: "", ftype: "", facc: "", planView: "bekliyor", priv: ls.get("kd-priv") === "1", period: ls.get("kd-repper") || "30-gun", anScope: ls.get("kd-anscope") || "all", anSel: (() => { try { return JSON.parse(ls.get("kd-ansel") || "[]"); } catch (e) { return []; } })(), anPeriod: ls.get("kd-anper") || "", accView: null, accPer: "30-gun", accQ: "", accType: "" };
 
 const acc = id => S.accounts.find(a => a.id === id);
 const con = id => S.contacts.find(c => c.id === id);
@@ -647,7 +647,17 @@ function renderLogin(err) {
     <p class="small-note">Girişte Google, uygulamanın yalnızca kendi oluşturduğu Drive dosyalarına erişmesi için izin ister.</p>
   </div></div>`;
 }
+// Gizlilik modu (göz): veriler silinmez, sadece ekranda boş bir defter gösterilir
+const EYE_ON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>`;
+const EYE_OFF = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 19c-7 0-11-7-11-7a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 7 11 7a18.5 18.5 0 0 1-2.16 3.19"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
+let HIDING = false;
 function render() {
+  const pb = $("#privBtn"); if (pb) { pb.innerHTML = ui.priv ? EYE_OFF : EYE_ON; pb.setAttribute("aria-pressed", String(!!ui.priv)); pb.title = ui.priv ? "Verileri göster" : "Verileri gizle"; pb.setAttribute("aria-label", pb.title); }
+  if (!ui.priv) return render0();
+  const real = S; S = emptyState(); HIDING = true;
+  try { render0(); } finally { S = real; HIDING = false; }
+}
+function render0() {
   if ($("#appRoot").hidden) return;
   TODAY = iso(new Date());
   const overdue = pending().filter(p => p.due < TODAY).length;
@@ -1521,7 +1531,7 @@ const BILL_PRESETS = [
   ["Aidat", "Faturalar", "", "AIDAT|YONETIM"],
   ["Kredi taksiti", "Banka masrafı", "", "KREDI TAKSIT|TAKSIT TAHSIL"]
 ];
-const billsArr = () => { if (live()) return (meta.bills || []).slice(); try { return JSON.parse(ls.get("kd-bills") || "[]"); } catch (e) { return []; } };
+const billsArr = () => { if (HIDING) return []; if (live()) return (meta.bills || []).slice(); try { return JSON.parse(ls.get("kd-bills") || "[]"); } catch (e) { return []; } };
 function saveBills(arr) {
   if (live()) { meta.bills = arr; fb.fs.setDoc(metaRef(), { bills: clean(arr) }, { merge: true }).catch(e => toast(failMsg(e))); Drive.dirty(); }
   else ls.set("kd-bills", JSON.stringify(arr));
@@ -2422,6 +2432,8 @@ document.addEventListener("click", async e => {
   if (d.billPay) { const [bid, m] = d.billPay.split("|"), b = billsArr().find(x => x.id === bid); if (!b) return;
     return txnForm({ type: "gider", amount: billExpected(b, m) || "", accountId: (acc(b.accountId) && b.accountId) || defaultPayAcc(), category: b.cat, sub: b.sub, note: `${b.name} · ${mfmtL.format(pd(m + "-01"))}`, date: TODAY, billId: b.id, billMonth: m }, "gider"); }
   if (d.planFor) { planForm({ contactId: d.planFor, dir: "tahsilat" }); return; }
+  if (el.id === "privBtn") { ui.priv = !ui.priv; ls.set("kd-priv", ui.priv ? "1" : "0"); ui.accView = null; closeSheet(); render(); window.scrollTo({ top: 0 }); return; }
+  if (ui.priv && (el.id === "addBtn" || d.act)) { if (el.id === "addBtn" || !["signin", "signout", "install"].includes(d.act)) { toast("Veriler gizli. Göstermek için sağ üstteki göz simgesine dokun."); return; } }
   if (el.id === "addBtn") return newMenu();
   const a = d.act; if (!a) return;
   if (a === "signin") return signIn();

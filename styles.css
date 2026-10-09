@@ -100,6 +100,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent);outline:none}
 .acard{border:1px solid var(--line);border-radius:var(--r);padding:14px;background:var(--surface);display:grid;gap:6px;text-align:left;width:100%}
 .acard:hover{border-color:var(--muted)}
 .acard.click{cursor:pointer}
+.btn.eye{padding:8px 10px;line-height:0}
 .star{background:none;border:0;padding:0 2px;font-size:1.15rem;line-height:1;color:#D9A400;cursor:pointer}
 .star[aria-pressed="false"]{color:var(--muted)}
 .acard .bal{font:500 1.3rem var(--f-num);font-variant-numeric:tabular-nums}
