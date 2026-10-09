@@ -894,10 +894,13 @@ function cardSummary(a) {
   const instAct = own.filter(t => instN(t) && addMonths(t.date, instN(t) - 1) > end).length;
   return { ...L, spent, future, instAct, prev: Math.max(0, Math.round((L.used - spent - future) * 100) / 100), start, cut, nextCut, end, synced };
 }
+// Asgari ödeme oranı: kartta seçilen; yoksa katılım bankalarında %100, diğerlerinde BDDK (limit 50 bin TL üstü %40, altı %20)
+const KATILIM_RX = /KUVEYT|ALBARAKA|TURKIYE FINANS|TÜRKIYE FINANS|ZIRAAT KATILIM|VAKIF KATILIM|EMLAK KATILIM|HAYAT FINANS|DUNYA KATILIM|TOM KATILIM|ENPARA KATILIM/;
+function minRate(a) { if (+a.minRate > 0) return +a.minRate; return KATILIM_RX.test(IMP.normText(groupOf(a) + " " + a.name)) ? 1 : (+a.limit || 0) > 50000 ? 0.4 : 0.2; }
 // Ekstre borcu, asgari ödeme, son ödeme: ekstreden/elle girilen değer; yoksa kesim gününe göre tahmin
 function cardDue(a, C) {
   C = C || cardSummary(a); if (!C) return null;
-  const rate = (+a.limit || 0) > 50000 ? 0.4 : 0.2; // BDDK: limiti 50 bin TL üstü kartlarda asgari %40, altı %20 (tahmin için)
+  const rate = minRate(a);
   let debt, min, due, date, est = false;
   if (a.stmtDate && (!C.cut || a.stmtDate >= addDays(C.cut, -3))) { debt = +a.stmtDebt || 0; min = a.minPay != null && a.minPay !== "" ? +a.minPay : debt * rate; due = a.dueDate || addDays(a.stmtDate, 10); date = a.stmtDate; }
   else if (C.cut) { est = true; date = C.cut; due = addDays(C.cut, 10); debt = null; }
@@ -921,7 +924,7 @@ function cardSummaryHtml(a) {
           <div><div class="lbl">${D.est ? "Asgari ödeme (tahmini)" : "Asgari ödeme"}</div><div class="big" style="font-size:1.05rem;color:${done ? "var(--pos)" : "var(--warn)"}">${D.est ? "≈ " : ""}${money(D.minRest)}</div></div></div>
         <div style="display:flex;justify-content:space-between;gap:8px;font-size:.84rem"><span class="muted">Son ödeme ${D.est ? "≈ " : ""}${dshort(D.due)}</span><b style="color:${D.est && late ? "var(--muted)" : col}">${done ? "Ödendi ✓" : late && D.est ? "tarih geçti · ekstreyi yükle" : late ? `${-D.left} gün gecikti` : D.left === 0 ? "Bugün!" : D.left + " gün kaldı"}</b></div>
         ${D.paid >= 0.01 && !done ? `<div class="muted" style="font-size:.78rem">Kesimden sonra ${money(D.paid)} ödendi</div>` : ""}
-        ${D.est ? `<div class="muted" style="font-size:.74rem">Ekstre yükleyince ya da kartı düzenleyip girince kesinleşir. Asgari oran %${Math.round(D.rate * 100)} varsayıldı.</div>` : ""}</div>`; })()}
+        ${D.est ? `<div class="muted" style="font-size:.74rem">Ekstre yükleyince ya da kartı düzenleyip girince kesinleşir. Asgari oran %${Math.round(D.rate * 100)}${+a.minRate ? "" : " varsayıldı (kartı düzenleyip değiştirebilirsin)"}.</div>` : ""}</div>`; })()}
     <div class="csum-rows">
       <span>Toplam borç</span><b class="num">${money(C.used)}</b>
       ${C.future >= 0.01 ? `<span>Gelecek dönem taksitleri${C.instAct ? ` (${C.instAct} alışveriş)` : ""}</span><b class="num">${money(C.future)}</b>` : ""}
@@ -1145,7 +1148,9 @@ function accountForm(a) {
       <label>Hesap kesim günü<input id="f-cut" inputmode="numeric" value="${a && a.cutDay ? a.cutDay : ""}" placeholder="Ayın kaçı? Örn. 15"></label></div>
       <div class="f2"><label>Son ekstre borcu (₺)<input id="f-sdebt" inputmode="decimal" value="${a && a.stmtDebt ? amtStr(a.stmtDebt) : ""}" placeholder="Ekstredeki dönem borcu"></label>
       <label>Asgari ödeme (₺)<input id="f-minpay" inputmode="decimal" value="${a && a.minPay ? amtStr(a.minPay) : ""}" placeholder="Boşsa hesaplanır"></label></div>
-      <label>Son ödeme tarihi<input id="f-due" type="date" value="${esc(a?.dueDate || "")}"></label>
+      <div class="f2"><label>Son ödeme tarihi<input id="f-due" type="date" value="${esc(a?.dueDate || "")}"></label>
+      <label>Asgari ödeme oranı<select id="f-minrate">${opt([["", "Otomatik" + (a ? ` (%${Math.round(minRate({ ...a, minRate: 0 }) * 100)})` : "")], ["0.2", "%20"], ["0.4", "%40"], ["1", "%100 (borcun tamamı)"]], a && a.minRate ? String(a.minRate) : "")}</select></label></div>
+      <label>Ekstre SMS'ini yapıştır <span class="muted" style="font-weight:400">(borç, asgari ve son ödeme otomatik dolar)</span><textarea id="f-sms" rows="2" placeholder="Değerli müşterimiz, 4311 ile biten kartınızın ekstresi kesildi. Toplam Borç: … Asgari Ödeme Tutarı: … Son Ödeme Tarihi: …"></textarea></label>
       <p class="small-note" style="margin:0" id="f-avail-hint">Kalan limiti bankanın uygulamasından bakıp yazarsan, borç buna göre eşitlenir. Ekstreden gelen tutarlarla oluşan farklar böylece düzelir.</p>
     </div>
     ${a && isCredit(a) ? instListHtml(a) : ""}
@@ -2075,6 +2080,7 @@ function submitForm(f) {
       const sd = parseAmt(v("#f-sdebt")), mp = parseAmt(v("#f-minpay")), du = v("#f-due");
       if (v("#f-sdebt") !== "" && sd >= 0 && (sd !== +old.stmtDebt || !old.stmtDate)) { o.stmtDebt = sd; o.stmtDate = o.cutDay ? lastCut(o.cutDay) : TODAY; }
       if (v("#f-minpay") !== "" && mp >= 0) o.minPay = mp; else if (v("#f-minpay") === "") delete o.minPay;
+      const mr = +v("#f-minrate"); if (mr > 0) o.minRate = mr; else delete o.minRate;
       if (du) { o.dueDate = du; if (!o.stmtDate && o.stmtDebt) o.stmtDate = o.cutDay ? lastCut(o.cutDay) : TODAY; }
       const sp = parseAmt(v("#f-spent")); if (v("#f-spent") !== "" && sp >= 0) Object.assign(o, spentAnchor(o.id), { syncSpent: sp });
       if (limit > 0 && avail >= 0 && v("#f-avail") !== "") {
@@ -2239,6 +2245,14 @@ document.addEventListener("submit", e => {
   submitForm(e.target);
 });
 document.addEventListener("input", e => {
+  if (e.target.id === "f-sms") {
+    const t = e.target.value, M = IMP.statementMeta(t) || {}, ids = IMP.statementIds(t); let n = 0;
+    if (M.debt != null) { $("#f-sdebt").value = amtStr(M.debt); n++; }
+    if (M.minPay != null) { $("#f-minpay").value = amtStr(M.minPay); n++; if (M.debt && Math.abs(M.minPay - M.debt) < 0.01) $("#f-minrate").value = "1"; }
+    if (M.dueDate) { $("#f-due").value = M.dueDate; n++; }
+    if (ids.length) { const cur = idsFromInput($("#f-ids").value); $("#f-ids").value = [...new Set([...cur, ...ids])].map(idLabel).join(", "); }
+    if (n) toast(`SMS'ten ${n} bilgi dolduruldu`);
+  }
   if (["f-amount", "f-rate", "f-toamt", "f-inst"].includes(e.target.id) && $("#frm")?.dataset.kind === "txn") updateTxnUnits();
   if (e.target.id === "f-open") updateOpenConv();
   if (["f-limit", "f-avail"].includes(e.target.id)) { const L = parseAmt($("#f-limit").value), A = parseAmt($("#f-avail").value), h = $("#f-avail-hint"); if (L > 0 && A >= 0 && $("#f-avail").value) h.innerHTML = `Kaydedince kart borcu <b>${money(L - A)}</b> olarak ayarlanacak (limitin %${Math.round((L - A) / L * 100)} kadarı kullanılmış).`; }

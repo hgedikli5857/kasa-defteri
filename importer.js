@@ -263,7 +263,7 @@ export async function imagesToRows(files, onProgress) {
 // Kart ekstresi özet bilgileri: kart limiti, hesap kesim günü, dönem borcu
 export function statementMeta(text) {
   const T = norm(text), num = re => { const m = T.match(re); return m ? parseAmount(m[1]) : null; };
-  const meta = { limit: num(/KART LIMITI\s*(?:\(TL\))?\s*:?\s*([\d.,]+)/), debt: num(/DONEM BORCU\s*(?:\(TL\))?\s*:?\s*([\d.,]+)/) };
+  const meta = { limit: num(/KART LIMITI\s*(?:\(TL\))?\s*:?\s*([\d.,]+)/), debt: num(/(?:DONEM|TOPLAM) BORCU?\s*(?:\(TL\))?\s*:?\s*([\d.,]+)/) };
   const c = T.match(/(?<!SONRAKI )HESAP KESIM TARIHI\s*:?\s*(\d{1,2})[\s./-]/); if (c && +c[1] >= 1 && +c[1] <= 31) meta.cutDay = +c[1];
   meta.minPay = num(/ASGARI ODEME(?: TUTARI)?\s*(?:\(TL\))?\s*:?\s*([\d.,]+)/);
   const DT = "(\\d{1,2}[./-]\\d{1,2}[./-]\\d{4}|\\d{1,2}\\s+[A-Z]+\\s+\\d{4})";
