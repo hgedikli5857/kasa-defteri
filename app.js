@@ -890,9 +890,11 @@ function cardSummary(a) {
     spent = +a.syncSpent + sum(spreadTx(after).filter(inPer), p => +p.amount);
   } else spent = sum(spreadTx(own).filter(inPer), p => +p.amount);
   spent = Math.round(spent * 100) / 100;
-  const fut = spreadTx(own.filter(instN)).filter(p => p.date > end), future = Math.round(sum(fut, p => +p.amount) * 100) / 100;
+  const fut = spreadTx(own.filter(instN)).filter(p => p.date > end);
+  let future = Math.round(sum(fut, p => +p.amount) * 100) / 100, futManual = false;
+  if (a.futInst != null && a.futInst !== "" && (a.futInstDate || "") >= addDays(start, -3)) { future = +a.futInst; futManual = true; } // bankadan elle girilen kalan taksit toplamı
   const instAct = own.filter(t => instN(t) && addMonths(t.date, instN(t) - 1) > end).length;
-  return { ...L, spent, future, instAct, prev: Math.max(0, Math.round((L.used - spent - future) * 100) / 100), start, cut, nextCut, end, synced };
+  return { ...L, spent, future, futManual, instAct, prev: Math.max(0, Math.round((L.used - spent - future) * 100) / 100), start, cut, nextCut, end, synced };
 }
 // Asgari ödeme oranı: kartta seçilen; yoksa katılım bankalarında %100, diğerlerinde BDDK (limit 50 bin TL üstü %40, altı %20)
 const KATILIM_RX = /KUVEYT|ALBARAKA|TURKIYE FINANS|TÜRKIYE FINANS|ZIRAAT KATILIM|VAKIF KATILIM|EMLAK KATILIM|HAYAT FINANS|DUNYA KATILIM|TOM KATILIM|ENPARA KATILIM/;
@@ -926,9 +928,15 @@ function cardSummaryHtml(a) {
         ${D.paid >= 0.01 && !done ? `<div class="muted" style="font-size:.78rem">Kesimden sonra ${money(D.paid)} ödendi</div>` : ""}
         ${D.est ? `<div class="muted" style="font-size:.74rem">Ekstre yükleyince ya da kartı düzenleyip girince kesinleşir. Asgari oran %${Math.round(D.rate * 100)}${+a.minRate ? "" : " varsayıldı (kartı düzenleyip değiştirebilirsin)"}.</div>` : ""}</div>`; })()}
     <div class="csum-rows">
-      <span>Toplam borç</span><b class="num">${money(C.used)}</b>
-      ${C.future >= 0.01 ? `<span>Gelecek dönem taksitleri${C.instAct ? ` (${C.instAct} alışveriş)` : ""}</span><b class="num">${money(C.future)}</b>` : ""}
-      ${C.prev >= 0.01 ? `<span>${C.future >= 0.01 ? "Önceki dönem borcu" : "Önceki dönem / taksit"}</span><b class="num">${money(C.prev)}</b>` : ""}
+      ${(() => { // toplam borç = ekstre borcu (kalan) + dönem içi + gelecek taksitler (+ fark)
+        const D = cardDue(a, C), known = D && !D.est;
+        const st = known ? D.rest : C.prev, fut = known && !C.futManual ? Math.max(0, Math.round((C.used - st - C.spent) * 100) / 100) : C.future;
+        const other = Math.round((C.used - st - C.spent - fut) * 100) / 100;
+        return `<span><b>Toplam borç</b></span><b class="num">${money(C.used)}</b>
+          <span>· ${known ? "Ekstre borcu" + (D.paid >= 0.01 ? " (kalan)" : "") : fut >= 0.01 ? "Önceki dönem borcu" : "Önceki dönem / taksit"}</span><b class="num">${money(st)}</b>
+          <span>· Dönem içi harcamalar</span><b class="num">${money(C.spent)}</b>
+          ${fut >= 0.01 || known ? `<span>· Gelecek dönem taksitleri${C.instAct && !C.futManual && !known ? ` (${C.instAct} alışveriş)` : ""}</span><b class="num">${money(fut)}</b>` : ""}
+          ${Math.abs(other) >= 0.5 ? `<span>· Fark (faiz, ücret, yuvarlama)</span><b class="num">${money(other)}</b>` : ""}`; })()}
       <span>Toplam limit</span><b class="num">${money(C.lim)}</b>
       <span>Dönem</span><b>${dshort(C.start)} – ${C.nextCut ? dshort(C.nextCut) + " (kesim)" : "bugün"}</b>
     </div>
@@ -1148,6 +1156,7 @@ function accountForm(a) {
       <label>Hesap kesim günü<input id="f-cut" inputmode="numeric" value="${a && a.cutDay ? a.cutDay : ""}" placeholder="Ayın kaçı? Örn. 15"></label></div>
       <div class="f2"><label>Son ekstre borcu (₺)<input id="f-sdebt" inputmode="decimal" value="${a && a.stmtDebt ? amtStr(a.stmtDebt) : ""}" placeholder="Ekstredeki dönem borcu"></label>
       <label>Asgari ödeme (₺)<input id="f-minpay" inputmode="decimal" value="${a && a.minPay ? amtStr(a.minPay) : ""}" placeholder="Boşsa hesaplanır"></label></div>
+      <label>Gelecek dönem taksitleri toplamı (₺) <span class="muted" style="font-weight:400">(bankada "kalan taksit"; boşsa hesaplanır)</span><input id="f-futinst" inputmode="decimal" value="${a && a.futInst != null && a.futInst !== "" ? amtStr(a.futInst) : ""}" placeholder="Örn. 5.403,51"></label>
       <div class="f2"><label>Son ödeme tarihi<input id="f-due" type="date" value="${esc(a?.dueDate || "")}"></label>
       <label>Asgari ödeme oranı<select id="f-minrate">${opt([["", "Otomatik" + (a ? ` (%${Math.round(minRate({ ...a, minRate: 0 }) * 100)})` : "")], ["0.2", "%20"], ["0.4", "%40"], ["1", "%100 (borcun tamamı)"]], a && a.minRate ? String(a.minRate) : "")}</select></label></div>
       <label>Ekstre SMS'ini yapıştır <span class="muted" style="font-weight:400">(borç, asgari ve son ödeme otomatik dolar)</span><textarea id="f-sms" rows="2" placeholder="Değerli müşterimiz, 4311 ile biten kartınızın ekstresi kesildi. Toplam Borç: … Asgari Ödeme Tutarı: … Son Ödeme Tarihi: …"></textarea></label>
@@ -2081,6 +2090,7 @@ function submitForm(f) {
       if (v("#f-sdebt") !== "" && sd >= 0 && (sd !== +old.stmtDebt || !old.stmtDate)) { o.stmtDebt = sd; o.stmtDate = o.cutDay ? lastCut(o.cutDay) : TODAY; }
       if (v("#f-minpay") !== "" && mp >= 0) o.minPay = mp; else if (v("#f-minpay") === "") delete o.minPay;
       const mr = +v("#f-minrate"); if (mr > 0) o.minRate = mr; else delete o.minRate;
+      const fi = parseAmt(v("#f-futinst")); if (v("#f-futinst") !== "" && fi >= 0) { if (fi !== +old.futInst) o.futInstDate = TODAY; else o.futInstDate = old.futInstDate || TODAY; o.futInst = fi; } else { delete o.futInst; delete o.futInstDate; }
       if (du) { o.dueDate = du; if (!o.stmtDate && o.stmtDebt) o.stmtDate = o.cutDay ? lastCut(o.cutDay) : TODAY; }
       const sp = parseAmt(v("#f-spent")); if (v("#f-spent") !== "" && sp >= 0) Object.assign(o, spentAnchor(o.id), { syncSpent: sp });
       if (limit > 0 && avail >= 0 && v("#f-avail") !== "") {
