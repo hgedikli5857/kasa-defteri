@@ -1,6 +1,6 @@
 // Kasa Defteri service worker — uygulama kabuğunu önbelleğe alır, internetsiz açılmayı sağlar.
 // Uygulamayı güncellediğinde VERSION değerini artır (ör. v2), telefonlar yeni sürümü alsın.
-const VERSION = "kd-v31";
+const VERSION = "kd-v32";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "importer.js", "firebase-config.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-512.png", "icons/apple-touch-icon.png"];
 
@@ -18,7 +18,7 @@ self.addEventListener("fetch", e => {
   if (/googleapis\.com$|firebaseapp\.com$|firebaseio\.com$|accounts\.google\.com$/.test(url.hostname) && url.hostname !== "fonts.googleapis.com") return;
   // Kendi dosyalarımız: önce ağ, olmazsa önbellek (güncellemeler hemen gelir, internetsiz de açılır)
   if (url.origin === location.origin) {
-    e.respondWith(fetch(req).then(res => { const copy = res.clone(); caches.open(VERSION).then(c => c.put(req, copy)); return res; })
+    e.respondWith(fetch(url.href, { cache: "no-cache", credentials: "same-origin" }).then(res => { const copy = res.clone(); caches.open(VERSION).then(c => c.put(req, copy)); return res; })
       .catch(() => caches.match(req).then(r => r || caches.match("index.html"))));
     return;
   }
