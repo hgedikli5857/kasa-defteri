@@ -1,0 +1,24 @@
+# Kasa Defteri — vade/fatura hatırlatmalarını telefona gönderir (uygulama kapalıyken de).
+# Kurulum: repo Settings → Secrets and variables → Actions → New repository secret
+#   Ad: FIREBASE_SERVICE_ACCOUNT   Değer: Firebase hizmet hesabı JSON dosyasının tamamı
+name: Bildirim gönder
+on:
+  schedule:
+    - cron: "0 6 * * *"   # 09:00 Türkiye
+    - cron: "0 15 * * *"  # 18:00 Türkiye (yalnızca bugün/gecikmiş olanlar)
+  workflow_dispatch:
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install --omit=dev --no-audit --no-fund
+        working-directory: tools
+      - run: node push.mjs
+        working-directory: tools
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          SLOT: ${{ github.event.schedule == '0 15 * * *' && 'aksam' || 'sabah' }}

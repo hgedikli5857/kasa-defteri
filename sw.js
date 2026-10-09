@@ -1,6 +1,6 @@
 // Kasa Defteri service worker — uygulama kabuğunu önbelleğe alır, internetsiz açılmayı sağlar.
 // Uygulamayı güncellediğinde VERSION değerini artır (ör. v2), telefonlar yeni sürümü alsın.
-const VERSION = "kd-v28";
+const VERSION = "kd-v29";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "importer.js", "firebase-config.js", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png", "icons/maskable-512.png", "icons/apple-touch-icon.png"];
 
@@ -48,6 +48,12 @@ async function checkReminders() {
   }
   await c.put(base + "kd-notified.json", new Response(JSON.stringify(sent), { headers: { "content-type": "application/json" } }));
 }
+// Web Push (Firebase Cloud Messaging): uygulama kapalıyken sunucudan gelen hatırlatma
+self.addEventListener("push", e => {
+  let d = {};
+  try { const j = e.data ? e.data.json() : {}; d = j.data || (j.notification ? { ...j.notification, ...(j.data || {}) } : j); } catch (x) { d = { title: "Kasa Defteri", body: e.data ? e.data.text() : "" }; }
+  e.waitUntil(self.registration.showNotification(d.title || "Kasa Defteri", { body: d.body || "", tag: d.tag || undefined, icon: "icons/icon-192.png", badge: "icons/icon-192.png", data: { url: d.url || "./" } }));
+});
 self.addEventListener("periodicsync", e => { if (e.tag === "kd-reminders") e.waitUntil(checkReminders()); });
 self.addEventListener("notificationclick", e => {
   e.notification.close();

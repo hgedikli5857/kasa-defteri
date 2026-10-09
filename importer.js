@@ -454,20 +454,20 @@ export function extract(rows, headerIdx, m, opt = {}) {
 const RULES = [
   ["Kira", ["KIRA"]],
   ["Vergi / SGK", ["SGK", "VERGI", "GIB ", "GELIR IDARESI", "KDV", "MTV", "STOPAJ", "BAG-KUR", "BAGKUR", "TAPU HARC", "TRAFIK CEZA", "BELEDIYE EMLAK"]],
-  ["Faturalar", ["TURK NET", "ELEKTRIK", "ENERJISA", "CK ENERJI", "AYEDAS", "BEDAS", "IGDAS", "DOGALGAZ", "DOGAL GAZ", "ISKI", "ASKI", "IZSU", "SU IDARESI", "TURKCELL", "VODAFONE", "TURK TELEKOM", "TT MOBIL", "SUPERONLINE", "TURKNET", "D-SMART", "DIGITURK", "FATURA"]],
+  ["Faturalar", ["TURK NET", "TURK.NET", "BASKENT GAZ", "FAT.TAHS", "FATURA TAHS", "AVEA", "KONTOR", "ELEKTRIK", "ENERJISA", "CK ENERJI", "AYEDAS", "BEDAS", "IGDAS", "DOGALGAZ", "DOGAL GAZ", "ISKI", "ASKI", "IZSU", "SU IDARESI", "TURKCELL", "VODAFONE", "TURK TELEKOM", "TT MOBIL", "SUPERONLINE", "TURKNET", "D-SMART", "DIGITURK", "FATURA"]],
   ["Banka masrafı", ["MASRAF", "BSMV", "KKDF", "VADE FARKI", "GECIKME", "FAIZ", "KART AIDATI", "HESAP ISLETIM", "EFT UCRETI", "HAVALE UCRETI", "KOMISYON"]],
   ["Lojistik", ["KARGO", "YURTICI", "ARAS ", "MNG", "PTT", "SURAT", "HEPSIJET", "TRENDYOL EXPRESS"]],
   ["Market / Gıda", ["PIDE", "KEBAP", "KAHVALTI", "MUTFAG", "LEZZET", "USTANIN", "DONER", "PIZZA", "DONDURMA", "CEREZ", "KURUYEMIS", " SU ", "LOKANTA", "RESTORAN", "CAFE", "KAFE", "KAHVE", "GIDA", "EKMEK", "UNLU MAMUL", "SUT ", "MANDIRA", "SARKUTERI", "BAKKAL", "TEKEL", "POPEYES", "BURGER KING", "MCDONALDS", "KFC", "DOMINOS", "LITTLE CAESARS", "SUBWAY", "SBARRO", "ARBYS", "USTA DONERCI", "KOFTECI", "BALIK", "TATLI", "BAKLAVA", "MIGROS", "A101", "BIM ", "SOK MARKET", "SOK ", "CARREFOUR", "MACROCENTER", "FILE ", "METRO ", "HAKMAR", "GETIR", "YEMEKSEPETI", "TRENDYOL YEMEK", "TRENDYOL GO", "RESTORAN", "LOKANTA", "CAFE", "KAFE", "STARBUCKS", "KAHVE", "BURGER", "PIZZA", "DONER", "FIRIN", "PASTANE", "SIMIT", "KASAP", "MANAV"]],
   ["Ulaşım", ["EGO KART", "EGO ", "TCDD", "OBILET", "OTOGAR", "PETROL", "AKARYAKIT", "SHELL", "OPET", "PETROL OFISI", " PO ", "BP ", "TOTAL", "AYTEMIZ", "HGS", "OGS", "ISTANBULKART", "UBER", "BITAKSI", "TAKSI", "OTOPARK", "ISPARK", "MARTI", "THY", "PEGASUS", "AJET", "OTOBUS", "METRO TURIZM", "PAMUKKALE", "KAMIL KOC", "LASTIK", "OTO SERVIS"]],
-  ["Giyim", ["LC WAIKIKI", "LCW", "DEFACTO", "KOTON", "ZARA", "H&M", "H M ", "MAVI", "COLINS", "COLIN S", "BOYNER", "FLO ", "INSTREET", "SKECHERS", "NIKE", "ADIDAS", "PUMA", "MANGO", "PULL&BEAR", "PULL AND BEAR", "BERSHKA", "STRADIVARIUS", "US POLO", "U.S. POLO", "NETWORK", "VAKKO", "BEYMEN", "DERIMOD", "PENTI", "SUWEN", "MARKS SPENCER", "LTB", "JACK JONES", "DECATHLON", "SPORTIVE", "AYAKKABI", "GIYIM", "TEKSTIL"]],
+  ["Giyim", ["LC WAIKIKI", "LCW", "DEFACTO", "KOTON", "ZARA", "H&M", "H M ", "MAVI", "COLINS", "COLIN S", "BOYNER", "FLO ", "INSTREET", "SKECHERS", "NIKE", "ADIDAS", "PUMA", "MANGO", "PULL&BEAR", "PULL AND BEAR", "BERSHKA", "STRADIVARIUS", "US POLO", "U.S. POLO", "NETWORK", "VAKKO", "BEYMEN", "DERIMOD", "PENTI", "SUWEN", "MARKS SPENCER", "LTB", "JACK JONES", "DECATHLON", "SPORTIVE", "AYAKKABI", "GIYIM", "TEKSTIL", "SOSYETE PAZARI"]],
   ["Yapı market / Ev", ["FAVORAHOME", "HOME ", "YALITIM", "KOCTAS", "BAUHAUS", "IKEA", "TEKZEN", "PRAKTIKER", "ENGLISH HOME", "MADAME COCO", "KARACA", "EVIDEA", "PASABAHCE", "YAPI MARKET", "HIRDAVAT", "BOYA", "MOBILYA", "ISTIKBAL", "BELLONA", "DOGTAS", "ENZA", "CILEK", "KELEBEK"]],
   ["Elektronik", ["MEDIAMARKT", "MEDIA MARKT", "TEKNOSA", "VATAN BILGISAYAR", "APPLE STORE", "SAMSUNG", "XIAOMI", "ARCELIK", "BEKO", "VESTEL", "BOSCH", "ITOPYA"]],
   ["Sağlık", ["ECZANE", "ECZ.", "HASTANE", "HASTANESI", "KLINIK", "POLIKLINIK", "DIS HEKIMI", "TIP MERKEZI", "LABORATUVAR", "OPTIK", "ACIBADEM", "MEDICAL PARK", "MEMORIAL", "LIV HOSPITAL"]],
   ["Kişisel bakım", ["GRATIS", "WATSONS", "ROSSMANN", "EVE SHOP", "SEPHORA", "MAC COSMETICS", "FLORMAR", "KUAFOR", "BERBER", "GUZELLIK"]],
   ["Eğlence / Abonelik", ["NETFLIX", "SPOTIFY", "YOUTUBE", "DISNEY", "EXXEN", "BLUTV", "BLU TV", "AMAZON PRIME", "PRIME VIDEO", "TABII", "GAIN", "SINEMA", "CINEMAXIMUM", "PARIBU CINEMA", "BILETIX", "PASSO", "STEAM", "PLAYSTATION", "XBOX"]],
-  ["Eğitim", ["SINAV", "OKUL", "KOLEJ", "UNIVERSITE", "DERSHANE", "KURS", "UDEMY", "COURSERA", "D&R", "D R ", "KITAP", "KITABEVI", "IDEFIX"]],
+  ["Eğitim", ["KIRTASIYE", "OLCME SECME", "OSYM", "YAYINCILIK", "YAY.LTD", "SINAV", "OKUL", "KOLEJ", "UNIVERSITE", "DERSHANE", "KURS", "UDEMY", "COURSERA", "D&R", "D R ", "KITAP", "KITABEVI", "IDEFIX"]],
   ["Pazarlama", ["FACEBK", "FACEBOOK", "META ", "GOOGLE ADS", "INSTAGRAM", "TIKTOK ADS", "LINKEDIN"]],
-  ["Yazılım", ["GOOGLE", "APPLE.COM", "ITUNES", "MICROSOFT", "ADOBE", "CANVA", "ANTHROPIC", "CLAUDE", "OPENAI", "CHATGPT", "GITHUB", "ZOOM", "NOTION", "DROPBOX"]],
+  ["Yazılım", ["POE.COM", "GOOGLE", "APPLE.COM", "ITUNES", "MICROSOFT", "ADOBE", "CANVA", "ANTHROPIC", "CLAUDE", "OPENAI", "CHATGPT", "GITHUB", "ZOOM", "NOTION", "DROPBOX"]],
   ["Online alışveriş", ["TRENDYOL", "HEPSIBURADA", "HEPSIBURAD", "HEPSIPAY", "AMAZON", "N11", "CICEKSEPETI", "TEMU", "ALIEXPRESS", "SHEIN", "PTTAVM", "MORHIPO", "IYZICO", "PAYTR"]],
   ["Ofis", ["KIRTASIYE", "OFIS", "OFFICE"]],
   ["Market / Gıda", ["MARKET", "MARKT", "SUPERMARKET", "HIPERMARKET"]],
@@ -495,13 +495,13 @@ export const learnKey = d => norm(cleanDesc(d)).replace(/[0-9*#:/\\.,-]+/g, " ")
 export function guessCategory(desc, amount, learned) {
   desc = cleanDesc(desc);
   const k = learnKey(desc); if (k && learned[k]) return learned[k];
-  const d = " " + norm(desc) + " ";
+  const d = " " + norm(desc).replace(/\bTAKSIT\w*/g, " ") + " "; // "TAKSİT" kelimesi TAKSİ (Ulaşım) sanılmasın
   for (const [cat, keys] of amount > 0 ? RULES_IN : RULES) if (keys.some(x => d.includes(x))) return cat;
   return amount > 0 ? "Diğer gelir" : "Diğer gider";
 }
 const SUBRULES = [
-  ["Elektrik", ["ELEKTRIK", "ENERJISA", "CK ENERJI", "AYEDAS", "BEDAS"]], ["Doğalgaz", ["IGDAS", "DOGALGAZ", "DOGAL GAZ", "BASKENTGAZ", "IZMIRGAZ"]], ["Su", ["ISKI", "ASKI", "IZSU", "SU IDARESI"]],
-  ["Telefon", ["TURKCELL", "VODAFONE", "TT MOBIL"]], ["İnternet", ["SUPERONLINE", "TURKNET", "TURK TELEKOM", "TTNET"]],
+  ["Elektrik", ["ELEKTRIK", "ENERJISA", "CK ENERJI", "AYEDAS", "BEDAS"]], ["Doğalgaz", ["BASKENT GAZ", "IGDAS", "DOGALGAZ", "DOGAL GAZ", "BASKENTGAZ", "IZMIRGAZ"]], ["Su", ["ISKI", "ASKI", "IZSU", "SU IDARESI"]],
+  ["Telefon", ["AVEA", "KONTOR", "TURKCELL", "VODAFONE", "TT MOBIL"]], ["İnternet", ["TURK.NET", "SUPERONLINE", "TURKNET", "TURK TELEKOM", "TTNET"]],
   ["Akaryakıt", ["AKARYAKIT", "SHELL", "OPET", "PETROL OFISI", " PO ", "BP ", "TOTAL", "AYTEMIZ"]], ["Otopark / HGS", ["HGS", "OGS", "OTOPARK", "ISPARK"]], ["Toplu taşıma", ["ISTANBULKART", "METRO", "MARMARAY", "EGO ", "TCDD", "OBILET", "OTOGAR"]], ["Araç bakım", ["LASTIK", "OTO SERVIS"]],
   ["Restoran / Kafe", ["PIDE", "KEBAP", "KAHVALTI", "MUTFAG", "LEZZET", "USTANIN", "DONDURMA", "LOKANTA", "YEMEKSEPETI", "TRENDYOL YEMEK", "RESTORAN", "LOKANTA", "CAFE", "KAFE", "STARBUCKS", "KAHVE", "BURGER", "PIZZA", "DONER"]], ["Market", ["MIGROS", "A101", "BIM ", "SOK ", "CARREFOUR", "MACROCENTER", "FILE ", "METRO ", "HAKMAR", "GETIR"]],
   ["SGK", ["SGK", "BAG-KUR", "BAGKUR"]], ["Vergi", ["VERGI", "GIB ", "GELIR IDARESI", "KDV", "MTV", "STOPAJ"]], ["Kart aidatı", ["KART AIDATI"]], ["EFT / havale", ["EFT UCRETI", "HAVALE UCRETI"]]
@@ -510,3 +510,5 @@ export function guessSub(desc) { const d = " " + norm(desc) + " "; for (const [s
 export function headerSignature(headers) { return headers.map(norm).filter(Boolean).join("|").slice(0, 300); }
 export const _dbg = { linesToAppRows: (...a) => linesToAppRows(...a), pdfLines: (...a) => pdfLines(...a), linesToTable: (...a) => linesToTable(...a), linesToRegexRows: (...a) => linesToRegexRows(...a) };
 export const normText = s => norm(s);
+// Taksitli alışverişin ücret satırı: "Vade Farki - FAVORAHOME ANKARA TR" → "FAVORAHOME ANKARA TR"
+export function feeBase(desc) { const m = String(desc || "").match(/^\s*(VADE FARK[Iİı]|KKDF|BSMV)\s*-\s*(.+)$/i); return m ? m[2].trim() : ""; }

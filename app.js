@@ -110,7 +110,7 @@ let S = emptyState();
 let mode = "loading"; // loading | demo | signedout | live | empty
 let fb = null, db = null, auth = null, user = null, meta = {};
 const unsubs = [];
-const ui = { tab: new URLSearchParams(location.search).get("tab") || ls.get("kd-tab") || "ozet", q: "", ftype: "", facc: "", planView: "bekliyor", period: "bu-ay" };
+const ui = { tab: new URLSearchParams(location.search).get("tab") || ls.get("kd-tab") || "ozet", q: "", ftype: "", facc: "", planView: "bekliyor", period: "bu-ay", anScope: ls.get("kd-anscope") || "all", anSel: (() => { try { return JSON.parse(ls.get("kd-ansel") || "[]"); } catch (e) { return []; } })(), anPeriod: ls.get("kd-anper") || "", accView: null, accPer: "30-gun", accQ: "", accType: "" };
 
 const acc = id => S.accounts.find(a => a.id === id);
 const con = id => S.contacts.find(c => c.id === id);
@@ -324,7 +324,7 @@ async function boot() {
   }
   try { fb = await loadFirebase(); }
   catch (e) { renderLogin("Bağlantı kurulamadı. İnternetini kontrol edip sayfayı yenile."); return; }
-  const app = fb.app.initializeApp(firebaseConfig);
+  const app = fb.app.initializeApp(firebaseConfig); fb.appInst = app;
   try {
     db = fb.fs.initializeFirestore(app, { localCache: fb.fs.persistentLocalCache({ tabManager: fb.fs.persistentMultipleTabManager() }) });
   } catch (e) { db = fb.fs.getFirestore(app); }
@@ -337,7 +337,7 @@ async function boot() {
     mode = "loading"; S = emptyState(); showApp(); subscribe();
     Drive.init();
     setTimeout(() => gmailAutoImport(), 8000);
-    setTimeout(() => { syncReminders(); notifyDue(); }, 5000);
+    setTimeout(() => { syncReminders(); notifyDue(); pushToken().then(ok => { if (ok) render(); }); }, 5000);
   });
 }
 function subscribe() {
@@ -660,6 +660,8 @@ function render() {
   if (mode === "empty") { v.innerHTML = emptyView(); return; }
   v.innerHTML = ({ ozet: viewOzet, islemler: viewIslemler, giderler: viewGiderler, vadeler: viewVadeler, hesaplar: viewHesaplar, cariler: viewCariler, raporlar: viewRaporlar }[ui.tab] || viewOzet)();
   const qi = $("#fq"); if (qi && ui._focusQ) { qi.focus(); qi.setSelectionRange(qi.value.length, qi.value.length); ui._focusQ = false; }
+  if (live()) { clearTimeout(render._rt); render._rt = setTimeout(syncReminders, 3000); }
+  const aq = $("#accq"); if (aq && ui._focusAq) { aq.focus(); aq.setSelectionRange(aq.value.length, aq.value.length); ui._focusAq = false; }
 }
 function renderNotice() {
   const b = $("#noticeBox"); let h = "";
@@ -704,7 +706,7 @@ function viewOzet() {
   const overdue = pending().filter(x => x.due < TODAY);
   const kpi = (l, v, s, cls = "") => `<div class="panel kpi ${cls}"><div class="lbl">${l}</div><div class="val">${v}</div><div class="sub">${s}</div></div>`;
   const up = pending().filter(x => x.due <= addDays(TODAY, 14)).sort((a, b) => a.due < b.due ? -1 : 1);
-  return `${dataCheckNotice()}${remindersPanel()}<section class="grid g-kpi">
+  return `${dataCheckNotice()}${remindersPanel()}${notifPanel(true)}<section class="grid g-kpi">
     ${kpi("Nakit ve banka", money(cash), S.accounts.some(isCash) ? `Nakit ${money0(cashTotal())} · Banka ${money0(cash - cashTotal())}` : `${S.accounts.length} hesap`, "hl")}
     ${kpi("Alacaklar", `<span class="pos">${money(r)}</span>`, `${pending().filter(x => x.dir === "tahsilat").length} bekleyen tahsilat`)}
     ${kpi("Borçlar", `<span class="neg">${money(p)}</span>`, `${pending().filter(x => x.dir === "ödeme").length} bekleyen ödeme`)}
@@ -727,7 +729,7 @@ function viewOzet() {
       <div class="legend"><span><i style="background:var(--pos)"></i>Gelir</span><span><i style="background:var(--neg)"></i>Gider</span></div></div>
       ${monthChart()}</div>
     <div class="panel"><div class="ph"><h2>Hesaplar</h2><button class="btn small" data-act="new-account">+ Hesap</button></div>
-      <div class="list">${accountGroups().filter(g => !g.allHide).map(g => `<div class="dhead" style="padding-top:8px"><span>${esc(g.name)}${g.allEx ? ` <span class="pill">toplam dışı</span>` : ""}</span><span class="num ${g.total < 0 ? "neg" : ""} ${g.allEx ? "muted" : ""}">${money(g.total)}</span></div>` + g.list.filter(a => !a.hide).map(a => `<div class="row click" data-edit-account="${esc(a.id)}" style="padding-left:12px"><div><div class="t">${esc(a.name)}</div><div class="m">${esc(kindLabel(a.kind))}${accAsset(a) !== "TRY" ? " · " + fmtAsset(balanceOf(a), accAsset(a)) : ""}${limitInfo(a) ? ` · <span style="color:${limitInfo(a).col}">kalan limit ${money0(limitInfo(a).avail)}</span>` : ""}</div></div><div class="amt ${valueTRY(a) < 0 ? "neg" : ""} ${a.excl ? "muted" : ""}">${money(valueTRY(a))}</div></div>`).join("")).join("") || `<p class="muted">Henüz hesap yok.</p>`}
+      <div class="list">${accountGroups().filter(g => !g.allHide).map(g => `<div class="dhead" style="padding-top:8px"><span>${esc(g.name)}${g.allEx ? ` <span class="pill">toplam dışı</span>` : ""}</span><span class="num ${g.total < 0 ? "neg" : ""} ${g.allEx ? "muted" : ""}">${money(g.total)}</span></div>` + g.list.filter(a => !a.hide).map(a => `<div class="row click" data-open-account="${esc(a.id)}" style="padding-left:12px"><div><div class="t">${a.fav ? "⭐ " : ""}${esc(a.name)}</div><div class="m">${esc(kindLabel(a.kind))}${accAsset(a) !== "TRY" ? " · " + fmtAsset(balanceOf(a), accAsset(a)) : ""}${limitInfo(a) ? ` · <span style="color:${limitInfo(a).col}">kalan limit ${money0(limitInfo(a).avail)}</span>` : ""}</div></div><div class="amt ${valueTRY(a) < 0 ? "neg" : ""} ${a.excl ? "muted" : ""}">${money(valueTRY(a))}</div></div>`).join("")).join("") || `<p class="muted">Henüz hesap yok.</p>`}
         ${S.accounts.some(a => a.hide) ? `<p class="small-note" style="margin:8px 0 0">${S.accounts.filter(a => a.hide).length} hesap gizli · göstermek için <button class="btn ghost small" data-tab="hesaplar" style="padding:0;display:inline">Hesaplar</button>'dan hesaba dokun.</p>` : ""}</div></div>
   </section>`;
 }
@@ -736,7 +738,7 @@ function planRow(p) {
   const when = p.status === "tamam" ? `Tamamlandı ${p.doneDate ? dshort(p.doneDate) : ""}` : late ? `${-dd} gün gecikti` : dd === 0 ? "Bugün" : `${dd} gün sonra · ${dshort(p.due)}`;
   return `<div class="row"><div class="click" data-edit-plan="${esc(p.id)}" style="cursor:pointer;min-width:0">
     <div class="t"><span class="pill ${p.dir === "tahsilat" ? "pos" : "neg"}">${p.dir === "tahsilat" ? "Tahsilat" : "Ödeme"}</span> ${esc(c ? c.name : (p.note || p.category))}</div>
-    <div class="m">${late ? `<span class="neg">${when}</span>` : when} · ${esc(catLabel(p))}${p.repeat === "aylık" ? " · her ay" : ""}</div></div>
+    <div class="m">${late ? `<span class="neg">${when}</span>` : when} · ${esc(catLabel(p))}${p.repeat === "aylık" ? " · her ay" : ""}${p.status !== "tamam" ? ` · 🔔 ${remindTxt(p.remind ?? 3)}` : ""}</div></div>
     <div class="act"><span class="amt ${p.dir === "tahsilat" ? "pos" : "neg"}">${p.dir === "tahsilat" ? "+" : "−"}${money(p.amount)}</span>
     ${p.status !== "tamam" ? `<button class="btn small" data-complete="${esc(p.id)}">${p.dir === "tahsilat" ? "Tahsil et" : "Öde"}</button>` : ""}</div></div>`;
 }
@@ -826,11 +828,12 @@ function viewVadeler() {
       <div class="kpi" style="padding:6px 0"><div class="lbl">Bekleyen tahsilat</div><div class="val pos">${money(recv())}</div></div>
       <div class="kpi" style="padding:6px 0"><div class="lbl">Bekleyen ödeme</div><div class="val neg">${money(pay())}</div></div>
       <div class="kpi" style="padding:6px 0"><div class="lbl">Fark</div><div class="val">${signed(recv() - pay())}</div></div></div>` : ""}
-    <div class="list">${h || `<p class="muted" style="padding:14px 4px">${done ? "Henüz tamamlanan vade yok." : "Bekleyen vade yok."}</p>`}</div></section>`;
+    <div class="list">${h || `<p class="muted" style="padding:14px 4px">${done ? "Henüz tamamlanan vade yok." : "Bekleyen vade yok."}</p>`}</div></section>${notifPanel(false)}`;
 }
 
 /* --- Hesaplar --- */
 function viewHesaplar() {
+  if (ui.accView && acc(ui.accView)) return accountDetail(acc(ui.accView));
   const gs = accountGroups(), total = totalCash(), assets = sum(gs, g => g.assets), debts = sum(gs, g => g.debts);
   let collapsed = {}; try { collapsed = JSON.parse(ls.get("kd-collapsed") || "{}"); } catch (e) { }
   return `<section class="panel"><div class="ph"><div><h2>Hesaplar</h2><p>${gs.length} grup · ${S.accounts.length} hesap</p></div>
@@ -842,6 +845,7 @@ function viewHesaplar() {
       <div class="kpi" style="padding:4px 0"><div class="lbl">Net</div><div class="val ${total < 0 ? "neg" : ""}">${money(total)}</div></div>
       ${S.accounts.some(a => a.excl) ? `<div class="kpi" style="padding:4px 0"><div class="lbl">Toplam dışı (BES, yatırım…)</div><div class="val muted">${money(exclTotal())}</div><div class="sub">${S.accounts.filter(a => a.excl).length} hesap · dahil: ${money0(total + exclTotal())}</div></div>` : ""}
     </div></section>
+  ${favPanel()}
   ${!S.accounts.some(isCash) ? `<button class="acard" type="button" data-act="new-cash" style="text-align:left;border-style:dashed"><b>+ Nakit hesabı ekle</b><span class="muted" style="font-size:.85rem">Cüzdan, kasa, evde duran döviz veya altın. Bankaya yatırmadığın parayı da takip et.</span></button>` : ""}
   ${gs.map(g => {
     const open = !collapsed[g.name], share = assets > 0 ? Math.round(g.assets / assets * 100) : 0;
@@ -959,16 +963,16 @@ function instListHtml(a) {
 function creditCardsPanel() {
   const cards = S.accounts.filter(a => limitInfo(a) && !a.hide); if (!cards.length) return "";
   return `<section class="panel"><div class="ph"><div><h2>Kredi kartlarım</h2><p>Kalan limit ve bu dönemki harcama</p></div></div>
-    <div class="grid g-2" style="gap:10px">${cards.map(a => `<button class="acard" data-edit-account="${esc(a.id)}" type="button"><b>${esc((a.group ? a.group + " · " : "") + a.name)}</b>${cardSummaryHtml(a)}</button>`).join("")}</div></section>`;
+    <div class="grid g-2" style="gap:10px">${cards.map(a => `<button class="acard" data-open-account="${esc(a.id)}" type="button"><b>${esc((a.group ? a.group + " · " : "") + a.name)}</b>${cardSummaryHtml(a)}</button>`).join("")}</div></section>`;
 }
 function accCard(a) {
   const b = balanceOf(a), tx = S.txns.filter(t => t.accountId === a.id || t.toAccountId === a.id), last = tx.reduce((m, t) => t.date > m ? t.date : m, "");
-  return `<button class="acard" data-edit-account="${esc(a.id)}" type="button"><div style="display:flex;justify-content:space-between;gap:8px;align-items:start"><b>${esc(a.name)}</b><span class="pill ${a.kind === "kredi kartı" || a.kind === "kredi" ? "neg" : a.kind === "yatırım" || a.kind === "vadeli" || a.kind === "birikim" || a.kind === "bes" ? "pos" : "acc"}">${esc(kindLabel(a.kind))}</span></div>
+  return `<div class="acard click" data-open-account="${esc(a.id)}" role="button" tabindex="0"><div style="display:flex;justify-content:space-between;gap:8px;align-items:start"><b style="min-width:0">${esc(a.name)}</b><span style="display:flex;gap:6px;align-items:center;flex:none"><button type="button" class="star" data-fav="${esc(a.id)}" aria-pressed="${!!a.fav}" title="${a.fav ? "Favorilerden çıkar" : "Favorilere ekle"}">${a.fav ? "★" : "☆"}</button><span class="pill ${a.kind === "kredi kartı" || a.kind === "kredi" ? "neg" : a.kind === "yatırım" || a.kind === "vadeli" || a.kind === "birikim" || a.kind === "bes" ? "pos" : "acc"}">${esc(kindLabel(a.kind))}</span></span></div>
     <div class="bal ${b < 0 ? "neg" : ""}" ${a.excl ? 'style="opacity:.6"' : ""}>${fmtAsset(b, accAsset(a))}</div>
     ${a.excl || a.hide ? `<div style="display:flex;gap:6px;flex-wrap:wrap">${a.excl ? `<span class="pill">toplam dışı</span>` : ""}${a.hide ? `<span class="pill">Özet'te gizli</span>` : ""}</div>` : ""}
     ${accAsset(a) !== "TRY" ? `<div class="muted" style="font-size:.82rem">≈ ${money(valueTRY(a))} · ${esc(assetOf(accAsset(a))[1])}</div>` : ""}
     ${limitInfo(a) ? cardSummaryHtml(a) : isCredit(a) ? `<div class="muted" style="font-size:.78rem">Limit girilmedi · düzenlemek için dokun</div>` : ""}
-    <div class="muted" style="font-size:.82rem">${tx.length} işlem${last ? ` · son ${dshort(last)}` : ""}</div></button>`;
+    <div class="muted" style="font-size:.82rem">${tx.length} işlem${last ? ` · son ${dshort(last)}` : ""} · <span style="color:var(--accent)">işlemleri gör ›</span></div></div>`;
 }
 function updateOpenConv() {
   const el = $("#f-open-conv"); if (!el) return; const code = $("#f-asset")?.value || "TRY", n = parseAmt($("#f-open").value);
@@ -1138,7 +1142,8 @@ function planForm(p) {
     <label>Cari<select id="f-con">${conOpts(p?.contactId || "")}</select></label>
     <div id="f-catwrap">${catFields(dir, p?.category, p?.sub)}</div>
     <div class="f2"><label>Tekrar<select id="f-rep">${opt([["yok", "Tek seferlik"], ["aylık", "Her ay"]], p?.repeat || "yok")}</select></label>
-    <label>Not<input id="f-note" value="${esc(p?.note || "")}" placeholder="Fatura no, açıklama"></label></div>
+    <label>Bildirim<select id="f-remind">${opt(REMIND_OPTS, String(p?.remind ?? 3))}</select></label></div>
+    <label>Not<input id="f-note" value="${esc(p?.note || "")}" placeholder="Fatura no, açıklama"></label>
     ${p?.status === "tamam" ? `<p class="muted" style="margin:0;font-size:.85rem">Bu vade ${p.doneDate ? dshort(p.doneDate) : ""} tarihinde tamamlandı.</p>` : ""}
     ${formFoot(p?.id)}</form>`);
 }
@@ -1166,6 +1171,7 @@ function accountForm(a) {
     <label>Ekstre tanıma bilgisi <span class="muted" style="font-weight:400">(IBAN, hesap-ek no ya da kart son 4 hane; virgülle)</span><input id="f-ids" value="${esc((a?.ids || []).map(idLabel).join(", "))}" placeholder="Örn. TR26 0020 …, 8094007-18, 9099"></label>
     <p class="small-note" style="margin:-4px 0 0">Ekstre yüklediğinde kendiliğinden öğrenilir. Aynı bankada birden çok hesabın varsa ekstrelerin doğru hesaba gitmesini bu sağlar.</p>
     <div style="display:grid;gap:6px;border:1px solid var(--line);border-radius:10px;padding:10px 12px">
+      <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="f-fav" style="width:auto" ${a?.fav ? "checked" : ""}> ⭐ Favorilere ekle <span class="muted" style="font-size:.82rem">(Hesaplar'ın en üstünde, Özet filtresinde)</span></label>
       <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="f-excl" style="width:auto" ${a?.excl ? "checked" : ""}> Toplamlara dahil etme <span class="muted" style="font-size:.82rem">(net pozisyon, varlıklar, nakit akışı)</span></label>
       <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="f-hide" style="width:auto" ${a?.hide ? "checked" : ""}> Özet'te gizle <span class="muted" style="font-size:.82rem">(Hesaplar'da görünmeye devam eder)</span></label>
       <p class="small-note" style="margin:0">BES, borsa, emeklilik gibi hemen kullanamayacağın birikimler için uygun. İşlemleri ve bakiyesi tutulmaya devam eder.</p></div>
@@ -1213,6 +1219,7 @@ const heat = (rank, share) => share >= 0.25 || rank === 0 ? "var(--neg)" : rank 
 function analysisRange(k) {
   const d = pd(TODAY), y = d.getFullYear(), m = d.getMonth(), dim = new Date(y, m + 1, 0).getDate();
   if (k === "gecen-ay") return { a: iso(new Date(y, m - 1, 1)), b: iso(new Date(y, m, 0)), pa: iso(new Date(y, m - 4, 1)), pb: iso(new Date(y, m - 1, 0)), f: 1 / 3, lbl: "Geçen ay", cmp: "önceki 3 ayın ortalaması", cmpTo: "önceki 3 ayın ortalamasına" };
+  if (k === "30-gun") return { a: addDays(TODAY, -29), b: TODAY, pa: addDays(TODAY, -119), pb: addDays(TODAY, -30), f: 1 / 3, lbl: "Son 30 gün", cmp: "önceki 30 günlerin ortalaması", cmpTo: "önceki 30 günlerin ortalamasına" };
   if (k === "3-ay") return { a: iso(new Date(y, m - 2, 1)), b: TODAY, pa: iso(new Date(y, m - 5, 1)), pb: iso(new Date(y, m - 2, 0)), f: 1, lbl: "Son 3 ay", cmp: "önceki 3 ay", cmpTo: "önceki 3 aya" };
   return { a: iso(new Date(y, m, 1)), b: TODAY, pa: iso(new Date(y, m - 3, 1)), pb: iso(new Date(y, m, 0)), f: d.getDate() / dim / 3, lbl: "Bu ay", cmp: "son 3 ayın aynı dönemi", cmpTo: "son 3 ayın aynı dönemine" };
 }
@@ -1230,9 +1237,9 @@ function payee(note) {
 const merchKey = t => IMP.learnKey(payee(t.note)).split(" ").slice(0, 2).join(" ");
 const SUB_RX = /NETFLIX|SPOTIFY|YOUTUBE|GOOGLE|APPLE\.COM|ITUNES|ICLOUD|CLAUDE|ANTHROPIC|CHATGPT|OPENAI|CANVA|POE\.COM|MICROSOFT|ADOBE|DISNEY|EXXEN|BLUTV|BLU TV|AMAZON PRIME|PRIME VIDEO|TABII|GAIN|DIGITURK|D-SMART|NOTION|DROPBOX|ZOOM|LINKEDIN|WPS|CAPCUT|DUOLINGO|STORYTEL/;
 const REG_CATS = ["Yazılım", "Eğlence / Abonelik", "Faturalar", "Kira", "Eğitim", "Vergi / SGK"];
-function recurring() {
+function recurring(inS = () => true) {
   const g = {};
-  S.txns.filter(t => t.type === "gider" && !isMove(t) && t.note).forEach(t => { const k = merchKey(t); if (k) (g[k] = g[k] || []).push(t); });
+  S.txns.filter(t => t.type === "gider" && !isMove(t) && t.note && inS(t)).forEach(t => { const k = merchKey(t); if (k) (g[k] = g[k] || []).push(t); });
   const out = [];
   for (const [k, l] of Object.entries(g)) {
     l.sort((x, y) => x.date < y.date ? -1 : 1);
@@ -1248,22 +1255,24 @@ function recurring() {
   return out.sort((x, y) => y.med - x.med);
 }
 // Hangi hesabın ekstresi dönemin sonuna kadar gelmiyor?
-function coverageGaps(a, b) {
-  return S.accounts.map(ac => {
+function coverageGaps(a, b, SC) {
+  return S.accounts.filter(ac => !SC || SC.has(ac.id)).map(ac => {
     const l = S.txns.filter(t => (t.accountId === ac.id || t.importAcc === ac.id) && t.importKey); if (l.filter(t => t.date >= addDays(b, -90)).length < 5) return null;
     const last = l.reduce((m, t) => t.date > m ? t.date : m, "");
     return last < b && diffDays(last, b) >= 5 && last >= addDays(a, -75) ? { ac, last } : null;
   }).filter(Boolean);
 }
 function spendingAnalysis() {
-  // ayın ilk günlerinde (az harcama varken) varsayılan olarak geçen ayı göster
-  const TX = spreadTx(S.txns); // taksitli alışverişler aylara bölünür
-  const thisMonthN = TX.filter(t => t.type === "gider" && t.date >= TODAY.slice(0, 8) + "01" && t.date <= TODAY).length;
-  const day = pd(TODAY).getDate(), per = ui.anPeriod || (day <= 7 || (thisMonthN < 5 && day < 10) ? "gecen-ay" : "bu-ay"), R = analysisRange(per);
+  // Varsayılan dönem "Son 30 gün": ayın başında bile tam bir aylık tablo verir (ör. 9 Ekim'de 1–9 Ekim değil, 10 Eylül–9 Ekim)
+  const SC = scopeAccs(), inS = t => !SC || SC.has(t.accountId);
+  const TX = spreadTx(S.txns.filter(inS)); // taksitli alışverişler aylara bölünür
+  const day = pd(TODAY).getDate(), per = ["30-gun", "bu-ay", "gecen-ay", "3-ay"].includes(ui.anPeriod) ? ui.anPeriod : "30-gun", R = analysisRange(per);
   const inR = (t, a, b) => t.date >= a && t.date <= b;
   // karşılaştırma yalnızca verisi olan aylarla (ör. ekstre sadece 2 ay geriye gidiyorsa 3'e bölme)
-  { const ms = new Set(TX.filter(t => t.type === "gider" && t.date >= R.pa && t.date <= R.pb).map(t => monthKey(t.date))).size;
-    if (per === "3-ay") R.f = ms >= 3 ? 1 : 0; else R.f = ms ? (per === "bu-ay" ? day / new Date(pd(TODAY).getFullYear(), pd(TODAY).getMonth() + 1, 0).getDate() : 1) / ms : 0; }
+  { const G = TX.filter(t => t.type === "gider");
+    if (per === "30-gun") { const w = [0, 1, 2].filter(i => G.some(t => t.date >= addDays(TODAY, -59 - 30 * i) && t.date <= addDays(TODAY, -30 - 30 * i))).length; R.f = w ? 1 / w : 0; }
+    else { const ms = new Set(G.filter(t => t.date >= R.pa && t.date <= R.pb).map(t => monthKey(t.date))).size;
+      if (per === "3-ay") R.f = ms >= 3 ? 1 : 0; else R.f = ms ? (per === "bu-ay" ? day / new Date(pd(TODAY).getFullYear(), pd(TODAY).getMonth() + 1, 0).getDate() : 1) / ms : 0; } }
   const early = per === "bu-ay" && day < 15;
   const exp = TX.filter(t => t.type === "gider" && inR(t, R.a, R.b)), inc = TX.filter(t => t.type === "gelir" && inR(t, R.a, R.b));
   const prev = TX.filter(t => t.type === "gider" && inR(t, R.pa, R.pb));
@@ -1272,22 +1281,31 @@ function spendingAnalysis() {
   exp.forEach(t => { const k = t.category || "Diğer gider"; (by[k] = by[k] || { v: 0, n: 0, s: {} }); by[k].v += txTRY(t); by[k].n++; if (t.sub) by[k].s[t.sub] = (by[k].s[t.sub] || 0) + txTRY(t); });
   prev.forEach(t => { const k = t.category || "Diğer gider"; pby[k] = (pby[k] || 0) + txTRY(t); });
   const arr = Object.entries(by).sort((x, y) => y[1].v - x[1].v);
-  const P = [["bu-ay", "Bu ay"], ["gecen-ay", "Geçen ay"], ["3-ay", "Son 3 ay"]];
-  const head = `<div class="ph"><div><h2>Harcama analizi · ${R.lbl}</h2><p>${exp.length} gider · <b class="num neg">${money(E)}</b>${PE > 0 ? ` · ${R.cmp}: ${money(PE)} <span class="${E > PE * 1.1 ? "neg" : E < PE * 0.9 ? "pos" : "muted"}">${E >= PE ? "▲" : "▼"} %${Math.abs(Math.round((E - PE) / PE * 100))}</span>` : ""}</p></div>
-    <div class="seg" role="group" aria-label="Analiz dönemi">${P.map(([k, l]) => `<button type="button" data-an="${k}" aria-pressed="${per === k}">${l}</button>`).join("")}</div></div>`;
-  if (!arr.length) return `<section class="panel">${head}<p class="muted" style="margin:0">Bu dönemde gider yok. Ekstreni içe aktarınca harcamaların burada kategori kategori incelenir.</p></section>`;
+  const P = [["30-gun", "Son 30 gün"], ["bu-ay", "Bu ay"], ["gecen-ay", "Geçen ay"], ["3-ay", "Son 3 ay"]];
+  const nDays = diffDays(R.a, R.b) + 1, scl = scopeLabel();
+  const head = `<div class="ph" style="align-items:flex-start"><div style="min-width:0"><h2>Harcama analizi</h2>
+      <p><b>${esc(scl)}</b> · ${R.lbl}: <b>${dshort(R.a)} – ${dshort(R.b)}</b> (${nDays} gün)</p></div>
+    <div style="display:grid;gap:6px;justify-items:end;max-width:100%">${scopeSelect()}
+    <div class="seg" role="group" aria-label="Analiz dönemi">${P.map(([k, l]) => `<button type="button" data-an="${k}" aria-pressed="${per === k}">${l}</button>`).join("")}</div></div></div>
+    ${SC && !SC.size ? `<div class="notice warn" style="margin:0 0 10px"><span>${ui.anScope === "fav" ? "Henüz favori hesabın yok. Hesaplar'da kartların üstündeki ☆ işaretine dokun." : "Seçili hesap bulunamadı."}</span><button class="btn small" data-an-scope="all">Tüm hesaplar</button></div>` : ""}
+    <div class="grid g-kpi" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));margin-bottom:10px">
+      <div class="kpi" style="padding:4px 0"><div class="lbl">Gider</div><div class="val neg">${money0(E)}</div><div class="sub">${exp.length} işlem${PE > 0 ? ` · <span class="${E > PE * 1.1 ? "neg" : E < PE * 0.9 ? "pos" : "muted"}">${E >= PE ? "▲" : "▼"} %${Math.abs(Math.round((E - PE) / PE * 100))}</span>` : ""}</div></div>
+      <div class="kpi" style="padding:4px 0"><div class="lbl">${per === "bu-ay" || per === "3-ay" ? "Karşılaştırma" : "Normal dönem"}</div><div class="val">${PE > 0 ? money0(PE) : "—"}</div><div class="sub">${PE > 0 ? esc(R.cmp) : "önceki veri yok"}</div></div>
+      <div class="kpi" style="padding:4px 0"><div class="lbl">Gelir</div><div class="val pos">${money0(I)}</div><div class="sub">${inc.length} işlem · transferler hariç</div></div>
+      <div class="kpi" style="padding:4px 0"><div class="lbl">Günlük ortalama</div><div class="val">${money0(E / nDays)}</div><div class="sub">aylık hızı ≈ ${money0(E / nDays * 30)}</div></div></div>`;
+  if (!arr.length) return `<section class="panel" id="anPanel">${head}<p class="muted" style="margin:0">Bu dönemde ${SC ? "seçili hesaplarda " : ""}gider yok. Ekstreni içe aktarınca harcamaların burada kategori kategori incelenir.</p></section>`;
   // uyarılar
   const W = [], [tk, tv] = arr.find(([k]) => !/^Diğer/.test(k)) || arr[0], ts = tv.v / E;
   const unc0 = by["Diğer gider"]; if (unc0 && unc0.v / E >= 0.3) W.push({ l: "warn", t: `<b>Harcamaların %${Math.round(unc0.v / E * 100)} kadarı tanınamadı ("Diğer gider").</b> Analiz bu yüzden eksik; İşlemler'de bu kayıtlara kategori verirsen uygulama sonrakileri hatırlar.` });
-  W.push({ l: ts >= 0.3 ? "neg" : "warn", t: `<b>En çok harcama: ${esc(tk)}</b> · ${money(tv.v)} · toplam gider içindeki payı <b>%${Math.round(ts * 100)}</b> (${tv.n} işlem).${ts >= 0.3 ? " Harcamalarının yaklaşık üçte biri tek kalemde; bu kategori için aylık üst sınır belirlemeyi düşün." : ""}` });
-  const gaps = per !== "3-ay" ? coverageGaps(R.a, R.b) : [];
+  W.push({ l: ts >= 0.3 ? "neg" : "warn", t: `<b>${per === "bu-ay" ? `Bu ay (ilk ${day} gün) en çok` : "En çok"} harcama: ${esc(tk)}</b> · ${money(tv.v)} · toplam gider içindeki payı <b>%${Math.round(ts * 100)}</b> (${tv.n} işlem).${ts >= 0.3 ? " Harcamalarının yaklaşık üçte biri tek kalemde; bu kategori için aylık üst sınır belirlemeyi düşün." : ""}` });
+  const gaps = per !== "3-ay" ? coverageGaps(R.a, R.b, SC) : [];
   if (gaps.length) W.unshift({ l: "warn", t: `<b>Bu dönemin verisi eksik.</b> ${gaps.slice(0, 3).map(g => `${esc(accName(g.ac))} (son hareket ${dshort(g.last)})`).join(", ")}${gaps.length > 3 ? ` ve ${gaps.length - 3} hesap daha` : ""}. Bu hesapların yeni ekstresini yükleyince analiz tamamlanır.` });
   if (per === "bu-ay" && day >= 7) { const dim = new Date(pd(TODAY).getFullYear(), pd(TODAY).getMonth() + 1, 0).getDate(), proj = E / day * dim, avg = R.f ? PE / (day / dim) : 0;
     W.push({ l: avg && proj > avg * 1.15 ? "neg" : "warn", t: `<b>Ay sonu tahmini: ${money0(proj)}</b> (günde ortalama ${money0(E / day)}).${avg ? ` Son aylarda bir ay ortalama ${money0(avg)}; ${proj > avg ? `bu hızla <b>${money0(proj - avg)} fazla</b> harcayacaksın.` : `bu hızla ${money0(avg - proj)} daha az harcayacaksın.`}` : ""}` }); }
   { const fq = {}; exp.forEach(t => { const k = merchKey(t); if (k) { (fq[k] = fq[k] || { n: 0, v: 0, d: payee(t.note) }); fq[k].n++; fq[k].v += txTRY(t); } });
     const f = Object.values(fq).sort((x, y) => y.n - x.n)[0]; if (f && f.n >= 4) W.push({ l: "warn", t: `<b>En sık gittiğin yer: ${esc(f.d.slice(0, 40))}</b> · ${f.n} kez, toplam ${money0(f.v)} (ortalama ${money0(f.v / f.n)}). Küçük ama sık harcamalar ayın sonunda büyük toplam ediyor.` }); }
-  const movIn = sum(S.txns.filter(t => isMove(t) && t.type === "gelir" && inR(t, R.a, R.b)), txTRY);
-  if (early) {} else if (E > I && movIn >= E - I) W.push({ l: "warn", t: `<b>Gelirin eksik görünüyor.</b> Bu dönem harcaman ${money(E)}, kayıtlı gelirin ${money(I)}; paranın çoğu kendi hesaplarından aktarılmış (${money(movIn)}). Maaşın yattığı hesabın ekstresini de yüklersen gelir-gider dengesi doğru hesaplanır.` });
+  const movIn = sum(S.txns.filter(t => isMove(t) && t.type === "gelir" && inS(t) && inR(t, R.a, R.b)), txTRY);
+  if (early || (SC && SC.size)) {} else if (E > I && movIn >= E - I) W.push({ l: "warn", t: `<b>Gelirin eksik görünüyor.</b> Bu dönem harcaman ${money(E)}, kayıtlı gelirin ${money(I)}; paranın çoğu kendi hesaplarından aktarılmış (${money(movIn)}). Maaşın yattığı hesabın ekstresini de yüklersen gelir-gider dengesi doğru hesaplanır.` });
   else if (I > 0 && E > I) W.push({ l: "neg", t: `<b>Gider geliri aştı.</b> ${money(E - I)} açık var; bu dönem kazandığından fazlasını harcadın.` });
   else if (I > 0 && E / I >= 0.85) W.push({ l: "warn", t: `<b>Gelirinin %${Math.round(E / I * 100)} kadarını harcadın.</b> Kenara kalan: ${money(I - E)}.` });
   arr.map(([k, o]) => { const base = (pby[k] || 0) * R.f; return { k, v: o.v, base, ch: base > 0 ? (o.v - base) / base : null }; })
@@ -1317,7 +1335,15 @@ function spendingAnalysis() {
       <div class="muted" style="font-size:.78rem;min-width:0">%${Math.round(sh * 100)} · ${o.n} işlem${subs ? " · " + subs : ""}</div>
       <div style="font-size:.78rem;text-align:right;white-space:nowrap">${ch == null ? `<span class="muted">${pby[k] || !R.f || early ? "" : "yeni"}</span>` : `<span class="${ch > 0.1 ? "neg" : ch < -0.1 ? "pos" : "muted"}">${ch >= 0 ? "▲" : "▼"} %${Math.abs(Math.round(ch * 100))}</span>`}</div></div>`; }).join("");
   const wcol = l => l === "neg" ? "background:var(--neg-soft);border-left:3px solid var(--neg)" : l === "pos" ? "background:var(--pos-soft);border-left:3px solid var(--pos)" : "background:var(--warn-soft);border-left:3px solid var(--warn)";
-  return `<section class="panel">${head}
+  // hesaplara göre: hangi hesaptan ne kadar, en çok hangi kategoriye
+  const byAcc = {}; exp.forEach(t => { const o = byAcc[t.accountId] = byAcc[t.accountId] || { v: 0, n: 0, c: {} }; o.v += txTRY(t); o.n++; const k = t.category || "Diğer gider"; o.c[k] = (o.c[k] || 0) + txTRY(t); });
+  const accRows = Object.entries(byAcc).filter(([id]) => acc(id)).sort((x, y) => y[1].v - x[1].v);
+  const accHtml = accRows.length > 1 || !SC ? `<div style="margin-top:14px"><div class="dhead" style="padding-top:0"><span>Hesaplara göre · en çok hangi kategoriye</span><span>dokun: o hesabı incele</span></div>
+    ${accRows.map(([id, o]) => { const a = acc(id), cs = Object.entries(o.c).sort((x, y) => y[1] - x[1]), top = cs.find(([k]) => !/^Diğer/.test(k)) || cs[0];
+      return `<div class="row click" data-an-scope="${esc(id)}" style="padding:9px 2px;display:block"><div style="display:flex;justify-content:space-between;gap:10px"><span class="t" style="min-width:0">${a.fav ? "⭐ " : ""}${esc(accName(a))}</span><b class="num neg">${money(o.v)}</b></div>
+        <div style="height:6px;background:var(--surface-2);border-radius:3px;overflow:hidden;margin:5px 0"><div style="width:${(o.v / accRows[0][1].v * 100).toFixed(1)}%;height:100%;background:var(--neg);opacity:.75"></div></div>
+        <div class="m">%${Math.round(o.v / E * 100)} · ${o.n} işlem · en çok <b style="color:var(--ink)">${esc(top[0])}</b> ${money0(top[1])} (%${Math.round(top[1] / o.v * 100)})${cs.length > 1 ? " · " + cs.filter(c => c !== top).slice(0, 2).map(([k, v]) => `${esc(k)} ${money0(v)}`).join(" · ") : ""}</div></div>`; }).join("")}</div>` : "";
+  return `<section class="panel" id="anPanel">${head}
     <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center">${donut}
       <div style="flex:1 1 280px;min-width:0;display:grid;gap:8px">${W.map(w => `<div style="${wcol(w.l)};border-radius:8px;padding:9px 12px;font-size:.9rem">${w.t}</div>`).join("")}</div></div>
     <div class="grid" style="margin-top:14px;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr))">
@@ -1328,7 +1354,7 @@ function spendingAnalysis() {
     </div>
     ${(() => {
       const big = exp.slice().sort((x, y) => txTRY(y) - txTRY(x)).slice(0, 5);
-      const subs = recurring(), subT = sum(subs, x => x.med);
+      const subs = recurring(inS), subT = sum(subs, x => x.med);
       const un = {}; exp.filter(t => t.category === "Diğer gider").forEach(t => { const k = IMP.learnKey(t.note || "") || "(açıklamasız)"; (un[k] = un[k] || { n: 0, v: 0, d: payee(t.note) }); un[k].n++; un[k].v += txTRY(t); });
       const unl = Object.entries(un).sort((x, y) => y[1].v - x[1].v).slice(0, 6);
       const col = (title, sub, body) => `<div style="min-width:0"><div class="dhead" style="padding-top:0"><span>${title}</span>${sub ? `<span>${sub}</span>` : ""}</div>${body}</div>`;
@@ -1339,7 +1365,88 @@ function spendingAnalysis() {
           <div style="display:flex;gap:8px;align-items:center;margin-top:4px"><span class="m" style="white-space:nowrap">${o.n} işlem</span><select class="an-uncat" data-key="${esc(k)}" style="padding:3px 6px;font-size:.8rem;width:auto;max-width:100%"><option value="">Kategori seç…</option>${impCatOptions("gider", "").replace(/ selected/g, "").replace(/<option value="Diğer gider"[^>]*>[^<]*<\/option>/, "")}</select></div></div>`).join("") + `<p class="small-note">Seçtiğin kategori bu açıklamaya sahip tüm kayıtlara ve sonraki ekstrelere uygulanır.</p>`) : ""}
       </div>`;
     })()}
+    ${accHtml}
   </section>`;
+}
+/* --- Özet filtresi: hangi hesaplar analiz edilsin --- */
+function scopeAccs(sc = ui.anScope || "all") {
+  if (sc === "all") return null;
+  if (sc === "fav") return new Set(S.accounts.filter(a => a.fav).map(a => a.id));
+  if (sc === "sel") return new Set((ui.anSel || []).filter(id => acc(id)));
+  if (sc.startsWith("g:")) return new Set(S.accounts.filter(a => groupOf(a) === sc.slice(2)).map(a => a.id));
+  return new Set(acc(sc) ? [sc] : []);
+}
+function scopeLabel(sc = ui.anScope || "all") {
+  if (sc === "all") return "Tüm hesaplar";
+  if (sc === "fav") return `⭐ Favoriler (${S.accounts.filter(a => a.fav).length} hesap)`;
+  if (sc === "sel") { const l = (ui.anSel || []).map(acc).filter(Boolean); return l.length <= 2 ? l.map(accName).join(" + ") : `${l.length} seçili hesap`; }
+  if (sc.startsWith("g:")) return sc.slice(2) + " · tüm hesaplar";
+  const a = acc(sc); return a ? accName(a) : "Tüm hesaplar";
+}
+function setScope(sc) { ui.anScope = sc || "all"; ls.set("kd-anscope", ui.anScope); }
+function scopeSelect() {
+  const sc = ui.anScope || "all", o = (v, l) => `<option value="${esc(v)}" ${sc === v ? "selected" : ""}>${esc(l)}</option>`;
+  return `<select id="an-scope" aria-label="Hangi hesaplar" style="width:auto;max-width:100%;padding:5px 8px;font-size:.86rem">${o("all", "Tüm hesaplar")}${o("fav", `⭐ Favoriler (${S.accounts.filter(a => a.fav).length})`)}${o("sel", sc === "sel" ? scopeLabel("sel") + " · değiştir…" : "Hesap seç (birden çok)…")}
+    ${accountGroups().map(g => `<optgroup label="${esc(g.name)}">${g.list.length > 1 ? o("g:" + g.name, g.name + " · tümü") : ""}${g.list.map(a => o(a.id, (a.fav ? "⭐ " : "") + a.name)).join("")}</optgroup>`).join("")}</select>`;
+}
+function scopePicker() {
+  const cur = new Set(ui.anScope === "sel" ? ui.anSel : [...(scopeAccs() || [])]);
+  openSheet("Analiz edilecek hesaplar", `<div class="form">
+    ${accountGroups().map(g => `<div><b style="font-size:.9rem">${esc(g.name)}</b>${g.list.map(a => `<label style="display:flex;gap:8px;align-items:center;color:var(--ink);padding:5px 0"><input type="checkbox" class="sc-sel" value="${esc(a.id)}" style="width:auto" ${cur.has(a.id) ? "checked" : ""}> ${a.fav ? "⭐ " : ""}${esc(a.name)} <span class="muted" style="font-size:.8rem">${esc(kindLabel(a.kind))}</span></label>`).join("")}</div>`).join("")}
+    <div class="foot"><span></span><div class="r"><button type="button" class="btn" data-close>Vazgeç</button><button type="button" class="btn primary" data-act="an-sel-apply">Uygula</button></div></div></div>`);
+  const s = $("#an-scope"); if (s) s.value = ui.anScope || "all";
+}
+
+/* --- Hesaplar: favoriler ve hesap detayı --- */
+function favPanel() {
+  const f = S.accounts.filter(a => a.fav);
+  if (!f.length) return `<section class="panel" style="padding:12px 16px"><p class="muted" style="margin:0;font-size:.88rem">⭐ <b>Favoriler:</b> En çok kullandığın hesap ve kartları burada toplamak için kartların sağ üstündeki <b>☆</b> işaretine dokun. Özet'teki analizi de yalnızca favorilere göre filtreleyebilirsin.</p></section>`;
+  const tot = sum(f.filter(a => !a.excl), valueTRY);
+  return `<section class="panel" style="border-left:3px solid #D9A400"><div class="ph"><div><h2>⭐ Favoriler</h2><p>${f.length} hesap · net ${money(tot)}</p></div>
+    <button class="btn small" data-an-scope="fav">Favorilerin harcama analizi</button></div>
+    <div class="cards">${f.map(accCard).join("")}</div></section>`;
+}
+function accountDetail(a) {
+  const per = ui.accPer || "30-gun", R = per === "tumu" ? { a: "0000-01-01", b: "9999-12-31", lbl: "Tüm zamanlar" } : analysisRange(per);
+  const amtIn = t => t.type === "transfer" && t.toAccountId === a.id ? (t.toAmount ?? t.amount) : t.amount;
+  const sg = t => t.type === "gelir" ? 1 : t.type === "gider" ? -1 : t.toAccountId === a.id ? 1 : -1;
+  let rows = S.txns.filter(t => (t.accountId === a.id || t.toAccountId === a.id) && t.date >= R.a && t.date <= R.b);
+  const per0 = rows;
+  if (ui.accType === "giris") rows = rows.filter(t => sg(t) > 0); else if (ui.accType === "cikis") rows = rows.filter(t => sg(t) < 0);
+  const q = (ui.accQ || "").toLocaleLowerCase("tr");
+  if (q) rows = rows.filter(t => [catLabel(t), t.note, txLabel(t), String(t.amount)].join(" ").toLocaleLowerCase("tr").includes(q));
+  rows.sort((x, y) => x.date < y.date ? 1 : x.date > y.date ? -1 : 0);
+  const code = accAsset(a), inn = sum(per0.filter(t => sg(t) > 0), amtIn), out = sum(per0.filter(t => sg(t) < 0), amtIn);
+  const exp = spreadTx(per0.filter(t => t.type === "gider" && t.accountId === a.id)).filter(t => t.date >= R.a && t.date <= R.b), E = sum(exp, txTRY);
+  const top = (() => { const m = {}; exp.forEach(t => { const k = t.category || "Diğer gider"; m[k] = (m[k] || 0) + txTRY(t); }); return Object.entries(m).sort((x, y) => y[1] - x[1]); })();
+  const P = [["30-gun", "30 gün"], ["bu-ay", "Bu ay"], ["gecen-ay", "Geçen ay"], ["3-ay", "3 ay"], ["tumu", "Tümü"]];
+  let h = "", cur = "";
+  for (const t of rows.slice(0, 250)) {
+    const m = monthKey(t.date);
+    if (m !== cur) { cur = m; const net = sum(rows.filter(x => monthKey(x.date) === m), x => sg(x) * amtIn(x)); h += `<div class="dhead"><span>${mfmtL.format(pd(m + "-01"))}</span><span class="num ${net < 0 ? "neg" : "pos"}">${code === "TRY" ? signed(net) : fmtAsset(net, code)}</span></div>`; }
+    const s = sg(t), other = t.type === "transfer" ? acc(t.accountId === a.id ? t.toAccountId : t.accountId) : null;
+    h += `<div class="row click" data-edit-txn="${esc(t.id)}"><div style="min-width:0"><div class="t">${esc(t.type === "transfer" ? (s > 0 ? "← " : "→ ") + (other ? accName(other) : "?") : txLabel(t))}</div>
+      <div class="m">${dshort(t.date)} · ${esc(t.type === "transfer" ? "Transfer" : catLabel(t))}${instN(t) ? ` · <span class="pill acc">${instN(t)} taksit</span>` : ""}${isMove(t) ? ` · <span class="pill">analiz dışı</span>` : ""}</div></div>
+      <div class="amt ${s > 0 ? "pos" : "neg"}">${s > 0 ? "+" : "−"}${fmtAsset(amtIn(t), t.type === "transfer" && t.toAccountId === a.id ? code : txAsset(t))}</div></div>`;
+  }
+  return `<section class="panel" id="accDetail"><div class="ph" style="align-items:flex-start"><div style="min-width:0">
+      <button class="btn ghost small" data-act="acc-back" style="padding:0 0 6px">← Hesaplar</button>
+      <h2>${esc(accName(a))} <button type="button" class="star" data-fav="${esc(a.id)}" aria-pressed="${!!a.fav}" title="${a.fav ? "Favorilerden çıkar" : "Favorilere ekle"}">${a.fav ? "★" : "☆"}</button></h2>
+      <p>${esc(kindLabel(a.kind))} · bakiye <b class="num ${balanceOf(a) < 0 ? "neg" : ""}">${fmtAsset(balanceOf(a), code)}</b>${code !== "TRY" ? ` ≈ ${money(valueTRY(a))}` : ""}</p></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-edit-account="${esc(a.id)}">Düzenle</button><button class="btn" data-act="import-stmt" data-acc="${esc(a.id)}">⇣ Ekstre</button><button class="btn primary" data-act="new-txn">+ İşlem</button></div></div>
+    ${limitInfo(a) ? `<div style="margin-bottom:12px">${cardSummaryHtml(a)}</div>` : ""}
+    <div class="seg" role="group" aria-label="Dönem" style="margin-bottom:10px">${P.map(([k, l]) => `<button type="button" data-acc-per="${k}" aria-pressed="${per === k}">${l}</button>`).join("")}</div>
+    <p class="muted" style="margin:0 0 8px;font-size:.84rem">${R.lbl}${per !== "tumu" ? `: ${dshort(R.a)} – ${dshort(R.b)}` : ""}</p>
+    <div class="grid g-kpi" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));margin-bottom:8px">
+      <div class="kpi" style="padding:4px 0"><div class="lbl">Giriş</div><div class="val pos">${fmtAsset(inn, code)}</div><div class="sub">${per0.filter(t => sg(t) > 0).length} işlem</div></div>
+      <div class="kpi" style="padding:4px 0"><div class="lbl">Çıkış</div><div class="val neg">${fmtAsset(out, code)}</div><div class="sub">${per0.filter(t => sg(t) < 0).length} işlem</div></div>
+      <div class="kpi" style="padding:4px 0"><div class="lbl">Harcama (gider)</div><div class="val">${money0(E)}</div><div class="sub">${top.length ? `en çok ${esc(top.find(([k]) => !/^Diğer/.test(k))?.[0] || top[0][0])}` : "gider yok"}</div></div></div>
+    ${exp.length ? `<details open style="margin-bottom:6px"><summary style="cursor:pointer;font-weight:600;font-size:.92rem;padding:4px 0">Bu hesapta en çok hangi kategoriye harcandı</summary>${catBars(exp, "var(--neg)")}</details>
+      <button class="btn small" data-an-scope="${esc(a.id)}" style="margin:0 0 10px">Bu hesabın detaylı harcama analizi (Özet) ›</button>` : ""}
+    <div class="filters"><input id="accq" type="search" placeholder="Bu hesapta ara: açıklama, kategori, tutar" value="${esc(ui.accQ || "")}" aria-label="Hesapta ara">
+      <div class="seg" role="group" aria-label="Yön">${[["", "Tümü"], ["giris", "Giriş"], ["cikis", "Çıkış"]].map(([k, l]) => `<button type="button" data-acc-type="${k}" aria-pressed="${(ui.accType || "") === k}">${l}</button>`).join("")}</div></div>
+    <div class="list">${h || `<p class="muted" style="padding:14px 4px">Bu dönemde işlem yok.${per !== "tumu" ? ` <button class="btn ghost small" data-acc-per="tumu">Tüm zamanları göster</button>` : ""}</p>`}</div>
+    ${rows.length > 250 ? `<p class="small-note">İlk 250 işlem gösteriliyor; aramayla daralt.</p>` : ""}</section>`;
 }
 
 
@@ -1461,11 +1568,12 @@ function collectReminders(days = 45) {
     if (D.est && (D.left < 0 || !a.limitSyncAt || a.limitSyncAt.slice(0, 10) < addDays(D.due, -10))) continue; // tahmin güvenilir değilse uyarma
     out.push({ key: "k:" + a.id + ":" + D.due, due: D.due, from: addDays(D.due, -3), title: `${accName(a)} son ödeme ${D.due === TODAY ? "bugün" : dshort(D.due)}`, body: `Asgari ${money(D.minRest)} · ekstre borcu ${money(D.rest)}${D.est ? " (tahmini)" : ""}`, url: "./?tab=hesaplar" }); }
   for (const p of pending()) { if (p.due > addDays(TODAY, days)) continue; const c = con(p.contactId);
-    out.push({ key: "p:" + p.id + ":" + p.due, due: p.due, from: addDays(p.due, -3), title: `${p.dir === "tahsilat" ? "Tahsilat" : "Ödeme"}: ${c ? c.name : (p.note || p.category)} · ${dshort(p.due)}`, body: money(p.amount), url: "./?tab=vadeler" }); }
+    out.push({ key: "p:" + p.id + ":" + p.due, due: p.due, from: addDays(p.due, -(+(p.remind ?? 3) || 0)), title: `${p.dir === "tahsilat" ? "Tahsilat" : "Ödeme"}: ${c ? c.name : (p.note || p.category)} · ${dshort(p.due)}`, body: money(p.amount), url: "./?tab=vadeler" }); }
   return out.sort((a, b) => a.due < b.due ? -1 : 1);
 }
 const dueReminders = () => collectReminders().filter(r => r.from <= TODAY);
 async function syncReminders() {
+  pushSync();
   try { const c = await caches.open("kd-data"); await c.put(new URL("kd-reminders.json", location.href).href, new Response(JSON.stringify({ at: TODAY, items: collectReminders(60) }), { headers: { "content-type": "application/json" } })); } catch (e) { }
 }
 async function notifyDue() {
@@ -1485,7 +1593,59 @@ async function enableNotifications() {
   if (p !== "granted") { toast("Bildirim izni verilmedi. Tarayıcı ayarlarından açabilirsin."); render(); return; }
   await syncReminders();
   try { const reg = await navigator.serviceWorker.ready; if (reg.periodicSync) await reg.periodicSync.register("kd-reminders", { minInterval: 12 * 3600e3 }); } catch (e) { }
+  await pushToken();
   toast("Bildirimler açık"); render(); notifyDue();
+}
+const REMIND_OPTS = [["0", "Vade günü"], ["1", "1 gün önce"], ["2", "2 gün önce"], ["3", "3 gün önce"], ["5", "5 gün önce"], ["7", "1 hafta önce"], ["14", "2 hafta önce"], ["-1", "Bildirim yok"]];
+const remindTxt = n => +n < 0 ? "bildirim yok" : +n === 0 ? "vade günü" : `${n} gün önce`;
+const pushKey = () => (firebaseConfig.vapidKey || meta.vapidKey || "").trim();
+const devId = () => { let d = ls.get("kd-dev"); if (!d) { d = Math.random().toString(36).slice(2, 10); ls.set("kd-dev", d); } return d; };
+const Push = { on: false, err: "" };
+// Uygulama kapalıyken bildirim: Firebase Cloud Messaging. Telefon jetonu ve yaklaşan ödemeler meta belgesine yazılır,
+// GitHub Actions'taki zamanlanmış görev (tools/push.mjs) her gün bunları okuyup bildirimi gönderir.
+async function pushToken() {
+  if (!live() || !pushKey() || !("PushManager" in window) || !("Notification" in window) || Notification.permission !== "granted") return false;
+  try {
+    const M = await import(FB + "firebase-messaging.js"); if (!(await M.isSupported())) { Push.err = "Bu tarayıcı anlık bildirimi desteklemiyor"; return false; }
+    const reg = await navigator.serviceWorker.ready;
+    const tok = await M.getToken(M.getMessaging(fb.appInst), { vapidKey: pushKey(), serviceWorkerRegistration: reg });
+    if (!tok) return false;
+    const cur = meta.fcm || {}, d = devId();
+    if (cur[d] !== tok) await fb.fs.setDoc(metaRef(), { fcm: { ...cur, [d]: tok } }, { merge: true });
+    Push.on = true; Push.err = ""; return true;
+  } catch (e) { Push.err = String(e && e.message || e).slice(0, 120); return false; }
+}
+let pushT;
+function pushSync() { // yaklaşan ödemeleri sunucu tarafı gönderici için meta belgesine yaz (değiştiyse)
+  if (!live()) return; clearTimeout(pushT);
+  pushT = setTimeout(() => {
+    const items = collectReminders(60).map(r => ({ k: r.key, f: r.from, d: r.due, t: r.title, b: r.body, u: r.url }));
+    if (JSON.stringify(items) === JSON.stringify((meta.push || {}).items || [])) return;
+    fb.fs.setDoc(metaRef(), { push: { at: new Date().toISOString(), items } }, { merge: true }).catch(() => { });
+  }, 1500);
+}
+async function testNotification() {
+  if (!("Notification" in window) || Notification.permission !== "granted") return enableNotifications();
+  const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration(), n = dueReminders()[0];
+  const title = n ? n.title : "Kasa Defteri bildirimi çalışıyor ✓", body = n ? n.body : "Vadesi yaklaşan ödemelerde böyle haber vereceğim.";
+  try { if (reg) await reg.showNotification(title, { body, tag: "kd-test", icon: "icons/icon-192.png", badge: "icons/icon-192.png", data: { url: "./?tab=vadeler" } }); else new Notification(title, { body }); toast("Test bildirimi gönderildi"); } catch (e) { toast("Bildirim gösterilemedi: " + e.message); }
+}
+function pushKeyForm() {
+  openSheet("Kapalıyken bildirim (Web Push)", `<form class="form" id="frm" data-kind="vapid">
+    <p class="small-note" style="margin:0">Firebase konsolu → Proje ayarları → <b>Cloud Messaging</b> → <b>Web yapılandırması</b> → <b>Web Push sertifikaları</b> → "Anahtar çifti oluştur". Çıkan <b>açık anahtarı</b> (BF… ile başlar) buraya yapıştır. Bu anahtar gizli değildir.</p>
+    <label>Web Push açık anahtarı (VAPID)<input id="f-vapid" value="${esc(pushKey())}" placeholder="BF..." autocomplete="off"></label>
+    ${Push.err ? `<p class="neg" style="margin:0;font-size:.84rem">${esc(Push.err)}</p>` : ""}
+    <div class="foot"><span></span><div class="r"><button type="button" class="btn" data-close>Vazgeç</button><button class="btn primary">Kaydet</button></div></div></form>`);
+}
+function notifPanel(compact) {
+  const sup = "Notification" in window, perm = sup ? Notification.permission : "unsupported";
+  const plans = pending().length, next = collectReminders(60).find(r => r.due >= TODAY);
+  if (compact && perm === "granted") return "";
+  if (perm !== "granted") return `<section class="panel" style="border-left:3px solid var(--accent)"><div class="ph"><div><h2>🔔 Vade bildirimleri</h2><p>${perm === "denied" ? "Bildirim izni kapalı. Telefon ayarları → Uygulamalar/Siteler → Kasa Defteri → Bildirimler'den aç." : !sup ? "Bu tarayıcı bildirim desteklemiyor. iPhone'da önce Paylaş → Ana Ekrana Ekle ile uygulamayı yükle, oradan aç." : `Vadesi yaklaşan ${plans ? plans + " ödeme/tahsilat" : "ödemeler"}, faturalar ve kart son ödeme günleri için telefonuna uygulama bildirimi gelsin.`}</p></div>
+    ${perm === "default" ? `<button class="btn primary" data-act="notif">Bildirimleri aç</button>` : ""}</div></section>`;
+  return `<section class="panel"><div class="ph"><div><h2>🔔 Bildirimler açık</h2><p>${next ? `Sıradaki: ${esc(next.title)} · bildirim ${next.from <= TODAY ? "bugün" : dshort(next.from)}` : "Yaklaşan vade yok."} Her vadenin ne kadar önce hatırlatılacağını vadeyi düzenleyerek seçebilirsin.</p>
+    <p class="small-note" style="margin:4px 0 0">${pushKey() ? (Push.on ? "✓ Uygulama kapalıyken de bildirim gelir (Web Push)." : "Web Push anahtarı kayıtlı; bu cihaz kaydediliyor…") : "Şu an bildirimler uygulamayı açınca ve telefon izin verdikçe arka planda gelir. Uygulama hiç açılmasa da gelmesi için Web Push'u kur."}</p></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn small" data-act="notif-test">Test bildirimi</button><button class="btn small" data-act="push-key">${pushKey() ? "Web Push ayarı" : "Web Push'u kur"}</button></div></div></section>`;
 }
 function remindersPanel() {
   const due = dueReminders(); if (!due.length) return "";
@@ -1500,16 +1660,21 @@ function dataIssues() {
   const dupAmt = S.txns.filter(t => t.type !== "transfer" && !ign[t.id] && splitDup(t.amount));
   const moves = S.txns.filter(t => t.type !== "transfer" && !isMove(t) && !ign[t.id] && IMP.ownMove(t.note, sn));
   const mv = new Set(moves.map(t => t.id));
-  const recat = S.txns.filter(t => t.type !== "transfer" && /^Diğer (gider|gelir)$/.test(t.category || "") && t.note && !mv.has(t.id) && !ign[t.id]).map(t => {
-    let g = IMP.guessCategory(t.note, t.type === "gelir" ? 1 : -1, {}); if (/^Diğer/.test(g)) return null;
+  // taksitli alışverişin Vade Farkı / KKDF / BSMV satırı alışverişin tutarıyla okunmuş (ekstre sütun hatası) → fazladan gider
+  const kk = (accId, date, amt, d) => accId + "|" + date + "|" + (+amt).toFixed(2) + "|" + IMP.learnKey(d || "");
+  const mains = new Set(S.txns.filter(t => t.type === "gider" && !IMP.feeBase(t.note)).map(t => kk(t.accountId, t.date, t.amount, t.note)));
+  const feeDup = S.txns.filter(t => t.type === "gider" && !ign[t.id] && IMP.feeBase(t.note) && mains.has(kk(t.accountId, t.date, t.amount, IMP.feeBase(t.note))));
+  const fd = new Set(feeDup.map(t => t.id));
+  const recat = S.txns.filter(t => t.type !== "transfer" && !fd.has(t.id) && (/^Diğer (gider|gelir)$/.test(t.category || "") || (/TAKS[İI]T/i.test(t.note || "") && t.category === "Ulaşım")) && t.note && !mv.has(t.id) && !ign[t.id]).map(t => {
+    let g = IMP.guessCategory(t.note, t.type === "gelir" ? 1 : -1, {}); if (/^Diğer/.test(g) && /^Diğer/.test(t.category)) return null; if (g === t.category) return null;
     if (!g.includes("|")) { const gs = IMP.guessSub(t.note); if (gs && subsOf(t.type, g).includes(gs)) g += "|" + gs; }
     return { t, g };
   }).filter(Boolean);
-  return { dupAmt, moves, recat, n: dupAmt.length + moves.length + recat.length };
+  return { dupAmt, moves, recat, feeDup, n: dupAmt.length + moves.length + recat.length + feeDup.length };
 }
 function dataCheckNotice() {
   const D = dataIssues(); if (!D.n) return "";
-  const parts = [D.dupAmt.length ? `<b>${D.dupAmt.length} işlemin tutarı hatalı okunmuş</b> (ör. ${money(D.dupAmt[0].amount)} → ${money(splitDup(D.dupAmt[0].amount))})` : "", D.moves.length ? `<b>${D.moves.length} işlem kendi hesapların arasında para aktarımı</b> ama gelir/gider sayılıyor (${money0(sum(D.moves, txTRY))})` : "", D.recat.length ? `<b>${D.recat.length} "Diğer" kaydı</b> artık kategorilenebiliyor` : ""].filter(Boolean);
+  const parts = [D.feeDup.length ? `<b>${D.feeDup.length} taksit ücret satırı (vade farkı/KKDF/BSMV) alışveriş tutarıyla okunmuş</b>, giderlerin ${money0(sum(D.feeDup, txTRY))} fazla görünüyor` : "", D.dupAmt.length ? `<b>${D.dupAmt.length} işlemin tutarı hatalı okunmuş</b> (ör. ${money(D.dupAmt[0].amount)} → ${money(splitDup(D.dupAmt[0].amount))})` : "", D.moves.length ? `<b>${D.moves.length} işlem kendi hesapların arasında para aktarımı</b> ama gelir/gider sayılıyor (${money0(sum(D.moves, txTRY))})` : "", D.recat.length ? `<b>${D.recat.length} "Diğer" kaydı</b> artık kategorilenebiliyor` : ""].filter(Boolean);
   return `<div class="notice warn" style="margin:0 0 14px"><span>Özetteki rakamlar şu yüzden yanıltıcı: ${parts.join("; ")}.</span><button class="btn small primary" data-act="data-check">İncele ve düzelt</button></div>`;
 }
 function dataCheckPanel() {
@@ -1517,6 +1682,8 @@ function dataCheckPanel() {
   const row = (t, right, why) => `<label class="row" style="grid-template-columns:auto minmax(0,1fr) auto;cursor:pointer"><input type="checkbox" class="dc-sel" value="${esc(t.id)}" checked style="width:auto">
     <span style="min-width:0"><span class="t" style="display:block;font-size:.88rem">${esc((t.note || catLabel(t)).slice(0, 70))}</span><span class="m">${dshort(t.date)} · ${esc(accName(acc(t.accountId)) || "")} · ${why}</span></span><span class="amt" style="font-size:.86rem;text-align:right">${right}</span></label>`;
   openSheet("Veri kontrolü", `<div class="form" id="dcPanel">
+    ${D.feeDup.length ? `<div><b>Hatalı okunan taksit ücret satırları · ${money(sum(D.feeDup, txTRY))}</b><p class="small-note" style="margin:2px 0 6px">Kart ekstresinde taksitli alışverişin altındaki <b>Vade Farkı, KKDF ve BSMV</b> satırları, alışverişin kendi tutarıyla okunmuş. Böylece aynı alışveriş 3–4 kez gider sayılmış. Gerçek ücretler birkaç lira; seçilen satırlar <b>silinir</b>, asıl alışveriş kalır.</p>
+      <div class="list" style="max-height:40vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:0 8px">${D.feeDup.sort((a, b) => b.amount - a.amount).map(t => row(t, `<span class="neg">−${money(t.amount)}</span>`, "silinecek")).join("")}</div></div>` : ""}
     ${D.dupAmt.length ? `<div><b>Hatalı okunan tutarlar</b><p class="small-note" style="margin:2px 0 6px">Yurt dışı harcamalarda ekstredeki iki tutar sütunu yan yana okunup birleşmiş. Okuyucu düzeltildi; bu kayıtların tutarı da düzelir.</p>
       <div class="list" style="border:1px solid var(--line);border-radius:8px;padding:0 8px">${D.dupAmt.map(t => row(t, `<s class="muted">${money(t.amount)}</s><br><b>${money(splitDup(t.amount))}</b>`, esc(t.category || ""))).join("")}</div></div>` : ""}
     ${D.moves.length ? `<div><b>Kendi hesapların arası para hareketleri</b><p class="small-note" style="margin:2px 0 6px">Kendi hesabından kendine havale, kart borcu ödemesi, ATM yatırma/çekme gibi hareketler gelir veya gider değildir; analizde gelirini ve giderini şişirir. Seçilenler <b>"${MOVE_CAT}"</b> kategorisine alınır: bakiyeler değişmez, sadece analiz ve raporlardan çıkar.</p>
@@ -1529,8 +1696,9 @@ function dataCheckPanel() {
 async function dataCheckApply(ignore) {
   const ids = new Set([...document.querySelectorAll(".dc-sel:checked")].map(i => i.value)); if (!ids.size) { toast("Önce kayıt seç."); return; }
   if (ignore) { const g = ignored(); ids.forEach(id => { g[id] = 1; }); ls.set("kd-ign", JSON.stringify(g)); toast(`${ids.size} kayıt yok sayıldı`); closeSheet(); return render(); }
-  const sn = mySurname(), ops = [], rc = new Map(dataIssues().recat.map(x => [x.t.id, x.g]));
+  const DI = dataIssues(), sn = mySurname(), ops = [], rc = new Map(DI.recat.map(x => [x.t.id, x.g])), fdel = new Set(DI.feeDup.map(t => t.id));
   for (const t of S.txns.filter(t => ids.has(t.id))) {
+    if (fdel.has(t.id)) { ops.push({ type: "delete", col: "txns", id: t.id }); continue; }
     const o = { ...t }, f = splitDup(t.amount);
     if (f) { o.amount = f; const p = (o.importKey || "").split("|"); if (p.length >= 3) { p[2] = String((+p[2] < 0 ? -1 : 1) * f); o.importKey = p.join("|"); } }
     if (!isMove(t) && IMP.ownMove(t.note, sn)) { o.category = MOVE_CAT; o.sub = ""; }
@@ -1538,7 +1706,7 @@ async function dataCheckApply(ignore) {
     const { id, ...d } = o; ops.push({ type: "set", col: "txns", id, data: d });
   }
   if (live()) { if (!(await safe(() => batchWrite(ops)))) return; Drive.dirty(); }
-  else { ops.forEach(o => { const i = S.txns.findIndex(t => t.id === o.id); S.txns[i] = { id: o.id, ...o.data }; }); saveDemo(); }
+  else { ops.forEach(o => { const i = S.txns.findIndex(t => t.id === o.id); if (o.type === "delete") S.txns.splice(i, 1); else S.txns[i] = { id: o.id, ...o.data }; }); saveDemo(); }
   toast(`${ops.length} kayıt düzeltildi`); closeSheet(); render();
 }
 
@@ -1845,6 +2013,7 @@ function buildImpItems() {
   const occ = {};
   const contacts = S.contacts.filter(c => c.name && c.name.length >= 4).map(c => ({ id: c.id, n: IMP.up(c.name) }));
   const seenInst = [], acNow = imp.accountId, usedMan = new Set();
+  const mainK = new Set(ext.filter(x => !IMP.feeBase(x.desc)).map(x => x.date + "|" + Math.abs(x.amount).toFixed(2) + "|" + IMP.learnKey(x.desc)));
   imp.items = ext.map(x => {
     const base = `${imp.accountId}|${x.date}|${x.amount}|${IMP.learnKey(x.desc)}`;
     occ[base] = (occ[base] || 0) + 1;
@@ -1855,6 +2024,8 @@ function buildImpItems() {
       || t.type === "transfer" && (type === "gider" && t.accountId === imp.accountId && Math.abs(t.amount - amt) < 0.01 || type === "gelir" && t.toAccountId === imp.accountId && Math.abs((t.toAmount ?? t.amount) - amt) < 0.01)));
     const D = IMP.up(x.desc), ct = contacts.find(c => D.includes(c.n));
     const isCard = acc(imp.accountId)?.kind === "kredi kartı";
+    const fb0 = IMP.feeBase(x.desc);
+    if (fb0 && x.amount < 0 && mainK.has(x.date + "|" + amt.toFixed(2) + "|" + IMP.learnKey(fb0))) return { ...x, key, type, amt, dup: "ücret", sel: false, cat: "Banka masrafı", contactId: "" };
     if (isCard && ((x.amount > 0 && /ODEME|ÖDEME|TESEKKUR|TEŞEKKÜR|PAYMENT|HESAPTAN/i.test(IMP.up(x.desc))) || /TESEKKUR|TEŞEKKÜR|ÖDEMENİZ|ODEMENIZ/.test(IMP.up(x.desc)))) {
       return { ...x, amount: Math.abs(x.amount), key, type: "gelir", amt, dup: "kart", sel: false, cat: "Diğer gelir", contactId: "" };
     }
@@ -1942,7 +2113,7 @@ function renderImport() {
       ${items.slice(0, 600).map((x, i) => `<div class="row" style="grid-template-columns:auto minmax(0,1fr) auto;opacity:${x.sel ? 1 : .55}">
         <input type="checkbox" class="imp-sel" data-i="${i}" ${x.sel ? "checked" : ""} style="width:auto" aria-label="Seç">
         <div style="min-width:0"><div class="t" style="font-size:.9rem;font-weight:500">${esc(x.desc || "(açıklama yok)")}</div>
-          <div class="m">${dshort(x.date)}${x.dup ? ` · <span style="color:var(--warn)">${x.dup === "var" ? "zaten eklendi" : x.dup === "kart" ? "kart ödemesi: gelir değil, bankadan karta transfer olarak gir" : x.dup === "taksit" ? `${x.instPart.k}/${x.instPart.n}. taksit: alışveriş zaten kayıtlı` : x.dup === "elle" ? `elle girdiğin ${money(x.manAmt)} kaydın yerine geçer` : x.dup === "elle?" ? `elle girdiğin ${money(x.manAmt)} (${esc(x.manCat)}) kaydınla aynı olabilir` : "olası tekrar"}</span>` : ""}${x.inst ? ` · <span class="pill acc">${x.inst} taksit · aylık ${money(x.instPer)}</span> <span class="muted">(ekstrede ${x.instPart.k}/${x.inst}. taksit)</span>` : ""}${x.contactId ? ` · ${esc(con(x.contactId)?.name || "")}` : ""}</div>
+          <div class="m">${dshort(x.date)}${x.dup ? ` · <span style="color:var(--warn)">${x.dup === "var" ? "zaten eklendi" : x.dup === "ücret" ? "taksit ücret satırı alışveriş tutarıyla okunmuş: eklenmez" : x.dup === "kart" ? "kart ödemesi: gelir değil, bankadan karta transfer olarak gir" : x.dup === "taksit" ? `${x.instPart.k}/${x.instPart.n}. taksit: alışveriş zaten kayıtlı` : x.dup === "elle" ? `elle girdiğin ${money(x.manAmt)} kaydın yerine geçer` : x.dup === "elle?" ? `elle girdiğin ${money(x.manAmt)} (${esc(x.manCat)}) kaydınla aynı olabilir` : "olası tekrar"}</span>` : ""}${x.inst ? ` · <span class="pill acc">${x.inst} taksit · aylık ${money(x.instPer)}</span> <span class="muted">(ekstrede ${x.instPart.k}/${x.inst}. taksit)</span>` : ""}${x.contactId ? ` · ${esc(con(x.contactId)?.name || "")}` : ""}</div>
           ${x.trade && imp.tradeAcc ? `<span class="pill acc" style="margin-top:4px;display:inline-block">⇄ ${x.amount > 0 ? "←" : "→"} ${esc(accName(acc(imp.tradeAcc)) || "")}</span>` : `<select class="imp-cat" data-i="${i}" style="margin-top:4px;padding:4px 6px;font-size:.82rem;width:auto;max-width:100%">${impCatOptions(x.type, x.cat)}</select>`}</div>
         <div class="amt ${x.amount > 0 ? "pos" : "neg"}" style="font-size:.92rem;text-align:right">${x.amount > 0 ? "+" : "−"}${fmtAsset(x.amt, IC)}${IC !== "TRY" ? `<div class="muted" style="font-size:.74rem;font-weight:400">${x.tl ? money(x.tl) : "≈ " + money(x.amt * (rateOf(IC) || 0))}${x.est ? " · kurla" : ""}</div>` : ""}</div></div>`).join("")}
     </div>${items.length > 600 ? `<p class="small-note">İlk 600 satır gösteriliyor; hepsi eklenecek.</p>` : ""}` : ""}
@@ -2064,7 +2235,7 @@ function submitForm(f) {
   } else if (kind === "plan") {
     const old = S.plans.find(x => x.id === id);
     const c = resolveCat(f, v("#f-dir")); if (!c) { toast("Yeni kategorinin adını yaz."); return; }
-    const o = { ...(old || {}), id: id || uid8(), dir: v("#f-dir"), amount: parseAmt(v("#f-amount")), due: v("#f-due"), contactId: v("#f-con"), category: c.category, sub: c.sub, repeat: v("#f-rep"), note: v("#f-note"), status: old?.status || "bekliyor" };
+    const o = { ...(old || {}), id: id || uid8(), dir: v("#f-dir"), amount: parseAmt(v("#f-amount")), due: v("#f-due"), contactId: v("#f-con"), category: c.category, sub: c.sub, repeat: v("#f-rep"), remind: +v("#f-remind") >= 0 ? +v("#f-remind") : 3, note: v("#f-note"), status: old?.status || "bekliyor" };
     put("plans", o); toast(id ? "Vade güncellendi" : "Vade eklendi"); closeSheet();
   } else if (kind === "bill") {
     const [c, sb = ""] = v("#b-cat").split("|"), day = Math.min(31, Math.max(1, parseInt(v("#b-day"), 10) || 1));
@@ -2073,13 +2244,17 @@ function submitForm(f) {
     if (!o.name) { toast("Ad gir."); return; }
     const i = arr.findIndex(x => x.id === o.id); if (i >= 0) arr[i] = o; else arr.push(o);
     saveBills(arr); toast(id ? "Güncellendi" : `${o.name} eklendi`); closeSheet(); return;
+  } else if (kind === "vapid") {
+    const k = v("#f-vapid").trim(); meta.vapidKey = k;
+    if (live()) fb.fs.setDoc(metaRef(), { vapidKey: k }, { merge: true }).catch(e => toast(failMsg(e)));
+    closeSheet(); pushToken().then(ok => { toast(ok ? "Web Push açık: uygulama kapalıyken de bildirim gelecek" : k ? "Anahtar kaydedildi; bildirim izni ver ya da sayfayı yenile" : "Web Push kapatıldı"); render(); }); return;
   } else if (kind === "gmacc") {
     const P = ui.gmailPending; if (!P) return; const accId = v("#gm-acc");
     try { const m = JSON.parse(ls.get("kd-gmail-acc") || "{}"); m[P.pat] = accId; ls.set("kd-gmail-acc", JSON.stringify(m)); } catch (e) { }
     imp = { accountId: accId, gmailKey: P.key }; ui.gmailPending = null; closeSheet(); readStatement(P.file); return;
   } else if (kind === "account") {
     const limit = parseAmt(v("#f-limit")), avail = parseAmt(v("#f-avail"));
-    const o = { id: id || uid8(), ids: idsFromInput(v("#f-ids")), excl: !!$("#f-excl")?.checked, hide: !!$("#f-hide")?.checked, name: v("#f-name"), group: v("#f-group") || inferGroup(v("#f-name")) || (v("#f-kind") === "nakit" ? "Nakit" : ""), kind: v("#f-kind"), asset: v("#f-asset") || "TRY", opening: parseAmt(v("#f-open")) || 0 };
+    const o = { id: id || uid8(), ids: idsFromInput(v("#f-ids")), fav: !!$("#f-fav")?.checked, excl: !!$("#f-excl")?.checked, hide: !!$("#f-hide")?.checked, name: v("#f-name"), group: v("#f-group") || inferGroup(v("#f-name")) || (v("#f-kind") === "nakit" ? "Nakit" : ""), kind: v("#f-kind"), asset: v("#f-asset") || "TRY", opening: parseAmt(v("#f-open")) || 0 };
     if (isCredit(o)) {
       const old = old0(o.id) || {};
       o.limit = limit > 0 ? limit : 0;
@@ -2133,11 +2308,16 @@ window.addEventListener("offline", renderChips);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && iso(new Date()) !== TODAY) render(); });
 
 document.addEventListener("click", async e => {
-  const el = e.target.closest("button,[data-edit-txn],[data-edit-plan],[data-edit-account],[data-show-contact],[data-batch],.overlay");
+  const el = e.target.closest("button,[data-edit-txn],[data-edit-plan],[data-edit-account],[data-open-account],[data-show-contact],[data-batch],.overlay");
   if (!el) return;
   if (el.id === "ov" && e.target === el) return closeSheet();
   const d = el.dataset;
-  if (d.tab) { ui.tab = d.tab; ls.set("kd-tab", d.tab); closeSheet(); render(); window.scrollTo({ top: 0 }); return; }
+  if (d.tab) { ui.tab = d.tab; ui.accView = null; ls.set("kd-tab", d.tab); closeSheet(); render(); window.scrollTo({ top: 0 }); return; }
+  if (d.fav) { const a = acc(d.fav); if (!a) return; put("accounts", { ...a, fav: !a.fav }); toast(a.fav ? `${a.name} favorilerden çıktı` : `⭐ ${a.name} favorilere eklendi`); return; }
+  if (d.openAccount) { if (!acc(d.openAccount)) return; ui.tab = "hesaplar"; ls.set("kd-tab", "hesaplar"); ui.accView = d.openAccount; ui.accQ = ""; ui.accType = ""; closeSheet(); render(); window.scrollTo({ top: 0 }); return; }
+  if (d.accPer) { ui.accPer = d.accPer; return render(); }
+  if (d.accType != null && el.closest("#accDetail")) { ui.accType = d.accType; return render(); }
+  if (d.anScope) { setScope(d.anScope); if (ui.tab !== "ozet") { ui.tab = "ozet"; ls.set("kd-tab", "ozet"); } render(); const s = $("#anPanel"); if (s) s.scrollIntoView({ block: "start" }); return; }
   if (el.hasAttribute("data-close")) return closeSheet();
   if (el.hasAttribute("data-del")) { const f = el.closest("form"); if (f) deleteFromForm(f, el); return; }
   if (d.ttype) {
@@ -2155,7 +2335,7 @@ document.addEventListener("click", async e => {
   if (d.editContact) { const c = con(d.editContact); if (c) contactForm(c); return; }
   if (d.showContact) { const c = con(d.showContact); if (c) contactDetail(c); return; }
   if (d.batch) return batchPanel(d.batch);
-  if (d.an) { ui.anPeriod = d.an; return render(); }
+  if (d.an) { ui.anPeriod = d.an; ls.set("kd-anper", d.an); return render(); }
   if (d.cmType) { CM.type = d.cmType; CM.edit = null; return catManager(); }
   if (d.cmAddsub != null) { CM.edit = { i: +d.cmAddsub, k: "sub" }; return catManager(); }
   if (d.cmRen != null) { CM.edit = { i: +d.cmRen, k: "ren" }; return catManager(); }
@@ -2189,7 +2369,7 @@ document.addEventListener("click", async e => {
   if (a === "account") return accountPanel();
   if (a === "install") { if (installEvt) { installEvt.prompt(); installEvt = null; renderNotice(); } return; }
   if (a === "new-gelir") return txnForm(null, "gelir");
-  if (a === "new-gider" || a === "new-txn") return txnForm(null, "gider");
+  if (a === "new-gider" || a === "new-txn") return el.closest("#accDetail") && acc(ui.accView) ? txnForm({ type: "gider", accountId: ui.accView, date: TODAY }, "gider") : txnForm(null, "gider");
   if (a === "new-transfer") { if (S.accounts.length < 2) { toast("Transfer için en az iki hesap gerekli."); return; } return txnForm(null, "transfer"); }
   if (a === "new-plan") return planForm();
   if (a === "new-account") { ui.newKind = ""; ui.newGroup = ""; return accountForm(); }
@@ -2207,10 +2387,15 @@ document.addEventListener("click", async e => {
   if (a === "rates-save") return saveManualRates();
   if (a === "rates-refresh") { el.disabled = true; return fetchRates(true); }
   if (a === "rates-all") { ui.ratesAll = !ui.ratesAll; return ratesPanel(); }
-  if (a === "import-stmt") return openImport(imp && imp.accountId);
+  if (a === "import-stmt") return openImport(el.dataset.acc || (imp && imp.accountId));
   if (a === "data-check") return dataCheckPanel();
   if (a === "bill-new") return billForm();
   if (a === "notif") return enableNotifications();
+  if (a === "notif-test") return testNotification();
+  if (a === "push-key") return pushKeyForm();
+  if (a === "an-sel") return scopePicker();
+  if (a === "an-sel-apply") { const ids = [...document.querySelectorAll(".sc-sel:checked")].map(i => i.value); if (!ids.length) { toast("En az bir hesap seç."); return; } ui.anSel = ids; ls.set("kd-ansel", JSON.stringify(ids)); setScope("sel"); closeSheet(); return render(); }
+  if (a === "acc-back") { ui.accView = null; render(); window.scrollTo({ top: 0 }); return; }
   if (a === "bill-del") { if (el.dataset.armed !== "1") { el.dataset.armed = "1"; el.textContent = "Silmeyi onayla"; return; } saveBills(billsArr().filter(b => b.id !== el.dataset.id)); toast("Silindi"); return closeSheet(); }
   if (a === "dc-apply") return dataCheckApply(false);
   if (a === "dc-ignore") return dataCheckApply(true);
@@ -2266,7 +2451,8 @@ document.addEventListener("input", e => {
   if (["f-amount", "f-rate", "f-toamt", "f-inst"].includes(e.target.id) && $("#frm")?.dataset.kind === "txn") updateTxnUnits();
   if (e.target.id === "f-open") updateOpenConv();
   if (["f-limit", "f-avail"].includes(e.target.id)) { const L = parseAmt($("#f-limit").value), A = parseAmt($("#f-avail").value), h = $("#f-avail-hint"); if (L > 0 && A >= 0 && $("#f-avail").value) h.innerHTML = `Kaydedince kart borcu <b>${money(L - A)}</b> olarak ayarlanacak (limitin %${Math.round((L - A) / L * 100)} kadarı kullanılmış).`; }
-  if (e.target.id === "fq") { ui.q = e.target.value; ui._focusQ = true; render(); } });
+  if (e.target.id === "fq") { ui.q = e.target.value; ui._focusQ = true; render(); }
+  if (e.target.id === "accq") { ui.accQ = e.target.value; ui._focusAq = true; render(); } });
 document.addEventListener("change", async e => {
   if (e.target.classList && e.target.classList.contains("an-uncat") && e.target.value) {
     const key = e.target.dataset.key, [c, sb = ""] = e.target.value.split("|");
@@ -2276,6 +2462,7 @@ document.addEventListener("change", async e => {
     else { list.forEach(t => { t.category = c; t.sub = sb; }); saveDemo(); render(); }
     toast(`${list.length} kayıt "${c}${sb ? " › " + sb : ""}" yapıldı`); return;
   }
+  if (e.target.id === "an-scope") { if (e.target.value === "sel") return scopePicker(); setScope(e.target.value); return render(); }
   if (e.target.id === "ftype") { ui.ftype = e.target.value; render(); }
   else if (e.target.id === "facc") { ui.facc = e.target.value; render(); }
   else if (e.target.id === "b-all") { document.querySelectorAll(".b-sel").forEach(i => { i.checked = e.target.checked; }); }
@@ -2319,7 +2506,8 @@ document.addEventListener("change", async e => {
     catch (err) { toast("Dosya okunamadı. Kasa Defteri'nin .json yedeğini seç."); }
   }
 });
-document.addEventListener("keydown", e => { if (e.key === "Escape" && $("#ov")) closeSheet(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && $("#ov")) closeSheet();
+  if ((e.key === "Enter" || e.key === " ") && e.target.dataset && e.target.dataset.openAccount && e.target.tagName !== "BUTTON") { e.preventDefault(); e.target.click(); } });
 
 let tt; function toast(m) { clearTimeout(tt); $("#toastRoot").innerHTML = `<div class="toast" role="status">${esc(m)}</div>`; tt = setTimeout(() => { $("#toastRoot").innerHTML = ""; }, 3400); }
 

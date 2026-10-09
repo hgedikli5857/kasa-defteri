@@ -170,10 +170,26 @@ Hesap eklerken **Para / varlık cinsi** seç: TL, USD, EUR, GBP, CHF, SAR; gram 
 **Raporlar → Kategoriler** (ya da işlem formundaki "Kategorileri düzenle"): kategori ekle, adını değiştir (eski işlemler de güncellenir), sil; alt kategori ekle (ör. Faturalar → Elektrik). İşlem formunda "＋ Yeni kategori…" ile anında da eklenebilir.
 
 ## Veri kontrolü ve "Hesaplar arası"
-Özet'in üstünde sarı bir uyarı çıkarsa **İncele ve düzelt**: hatalı okunmuş tutarlar (iki sütun birleşmiş), kendi hesapların arasındaki para hareketleri (kendine havale, kart borcu ödemesi, ATM, BES katkısı) ve artık tanınabilen "Diğer" kayıtları tek ekranda düzeltilir. **Hesaplar arası** kategorisindeki kayıtlar bakiyeyi etkiler ama gelir/gider analizine ve raporlara girmez.
+Özet'in üstünde sarı bir uyarı çıkarsa **İncele ve düzelt**: hatalı okunmuş tutarlar (iki sütun birleşmiş), kendi hesapların arasındaki para hareketleri (kendine havale, kart borcu ödemesi, ATM, BES katkısı) artık tanınabilen "Diğer" kayıtları ve **alışveriş tutarıyla okunmuş taksit ücret satırları** (Vade Farkı / KKDF / BSMV — aynı alışverişi 3–4 kez gider gösteriyordu) tek ekranda düzeltilir. **Hesaplar arası** kategorisindeki kayıtlar bakiyeyi etkiler ama gelir/gider analizine ve raporlara girmez.
 
 ## Harcama analizi (Özet)
-Bu ay / geçen ay / son 3 ay için giderler kategoriye göre gruplanır. Ayrıca: **verisi eksik hesaplar** (ekstresi güncel olmayan), **ay sonu tahmini**, **en sık gidilen yer**, **en büyük 5 harcama**, **düzenli ödemeler / abonelikler** (aylık toplamıyla) ve **tanınmayan harcamalar** (yerinde kategori seçimi) gösterilir. Ayın ilk haftasında varsayılan görünüm geçen aydır. En yüksek kalem kırmızı, sonrakiler turuncu-amber gösterilir; önceki döneme göre artış/azalış, gelir-gider dengesi, yeni harcama kalemleri ve en çok harcanan yerler için uyarılar üretilir.
+Varsayılan dönem **Son 30 gün**dür (ayın başında bile tam bir aylık tablo verir); **Bu ay / Geçen ay / Son 3 ay** da seçilebilir. Başlıkta dönemin tarihleri ve hangi hesapların analiz edildiği yazar.
+- **Hesap filtresi:** Tüm hesaplar, ⭐ Favoriler, bir banka grubunun tümü, tek hesap ya da "Hesap seç (birden çok)…". Seçim hatırlanır.
+- **Hesaplara göre:** her hesabın toplam gideri ve en çok hangi kategoriye harcandığı; dokununca o hesap analiz edilir.
+- Kategoriler (yüksekten düşüğe, önceki döneme göre ▲▼), en çok harcanan yerler, en büyük 5 harcama, düzenli ödemeler/abonelikler, tanınmayan harcamalar (yerinde kategori seçimi), verisi eksik hesaplar, ay sonu tahmini ve uyarılar.
+
+## Favori hesaplar ve hesap detayı
+Hesaplar'da kartın sağ üstündeki **☆** ile hesap favorilere eklenir; favoriler sayfanın en üstünde toplanır. Bir hesaba dokununca **hesap detayı** açılır: bakiye, kart özeti, dönem seçimi (30 gün / bu ay / geçen ay / 3 ay / tümü), giriş-çıkış toplamı, **en çok hangi kategoriye harcandığı** ve o hesabın işlemleri (arama, giriş/çıkış filtresi). Düzenlemek için **Düzenle**.
+
+## Vade bildirimleri
+Vadeler'de ve Özet'te **Bildirimleri aç**. Her vadede **Bildirim** seçeneği: vade günü, 1/2/3/5/7/14 gün önce ya da kapalı (varsayılan 3 gün). Faturalar ve kart son ödeme günleri de bildirilir.
+- **Kurulumsuz:** uygulamayı açınca ve (Android'de yüklü uygulamada) telefon izin verdikçe arka planda.
+- **Uygulama kapalıyken de (Web Push):**
+  1. Firebase konsolu → Proje ayarları → Cloud Messaging → Web Push sertifikaları → **Anahtar çifti oluştur**. Açık anahtarı uygulamada Vadeler → **Web Push'u kur** alanına yapıştır.
+  2. Firebase konsolu → Proje ayarları → **Hizmet hesapları** → **Yeni özel anahtar oluştur** (JSON iner).
+  3. GitHub → repo → Settings → Secrets and variables → Actions → **New repository secret**: ad `FIREBASE_SERVICE_ACCOUNT`, değer JSON dosyasının tamamı.
+  4. GitHub → Actions → **Bildirim gönder** → Run workflow ile dene. Sonra her gün 09:00 ve 18:00'de (Türkiye) kendiliğinden çalışır.
+  iPhone'da Web Push için uygulama Ana Ekrana eklenmiş olmalı (iOS 16.4+).
 
 ## Sorun giderme
 
