@@ -191,6 +191,7 @@ function fmtAsset(n, code) {
   return nfU.format(n || 0) + " " + unit;
 }
 const txAsset = t => accAsset(acc(t.accountId));
+const FX_CURS = ["TRY", "USD", "EUR", "GBP", "CHF", "SAR"];
 const txTRY = t => { const c = txAsset(t); if (c === "TRY") return t.amount; return t.amount * (+t.rate || rateOf(c) || 0); };
 const assetOptions = sel => ["Para", "Altın", "Gümüş"].map(g => `<optgroup label="${g}">${ASSETS.filter(x => x[3] === g).map(([c, l, u]) => `<option value="${c}" ${c === (sel || "TRY") ? "selected" : ""}>${esc(l)}${u.length <= 4 && g !== "Para" ? " (" + u + ")" : ""}</option>`).join("")}</optgroup>`).join("");
 
@@ -814,7 +815,7 @@ function viewIslemler() {
     }
     const a = acc(t.accountId), sg = t.type === "gelir" ? 1 : t.type === "gider" ? -1 : 0;
     h += `<div class="row click" data-edit-txn="${esc(t.id)}"><div><div class="t">${esc(txLabel(t))}</div>
-      <div class="m">${dshort(t.date)} · ${esc(catLabel(t))}${instN(t) ? ` · <span class="pill acc">${instN(t)} taksit · aylık ${money0(t.amount / instN(t))}</span>` : ""}${t.type !== "transfer" && a ? " · " + esc(accName(a)) : ""}${t.note && con(t.contactId) ? " · " + esc(t.note) : ""}</div></div>
+      <div class="m">${dshort(t.date)} · ${esc(catLabel(t))}${t.fx ? ` · <span class="pill acc">${esc(fmtAsset(t.fx.amt, t.fx.cur))}</span>` : ""}${instN(t) ? ` · <span class="pill acc">${instN(t)} taksit · aylık ${money0(t.amount / instN(t))}</span>` : ""}${t.type !== "transfer" && a ? " · " + esc(accName(a)) : ""}${t.note && con(t.contactId) ? " · " + esc(t.note) : ""}</div></div>
       <div class="amt ${sg > 0 ? "pos" : sg < 0 ? "neg" : "muted"}">${sg > 0 ? "+" : sg < 0 ? "−" : "⇄ "}${fmtAsset(t.amount, txAsset(t))}${t.type === "transfer" && t.toAmount != null && accAsset(acc(t.toAccountId)) !== txAsset(t) ? `<div class="muted" style="font-size:.78rem">→ ${fmtAsset(t.toAmount, accAsset(acc(t.toAccountId)))}</div>` : txAsset(t) !== "TRY" && t.type !== "transfer" ? `<div class="muted" style="font-size:.78rem">≈ ${money(txTRY(t))}</div>` : ""}</div></div>`;
   }
   return `<section class="panel"><div class="ph"><div><h2>İşlemler</h2><p>${rows.length} kayıt · <span class="pos">${money(inc)}</span> gelir · <span class="neg">${money(exp)}</span> gider</p></div>
@@ -1168,9 +1169,11 @@ function txnForm(t, presetType) {
     <input type="hidden" id="f-type" value="${type}">
     <div class="f2"><label>${type === "transfer" ? "Çıkış hesabı" : "Hesap"}<select id="f-acc">${accOpts(acc(accId) ? accId : S.accounts[0].id)}</select></label>
     ${type === "transfer" ? `<label>Giriş hesabı<select id="f-to">${accOpts(t?.toAccountId || S.accounts.find(x => x.id !== accId)?.id)}</select></label>` : `<label>Tarih<input id="f-date" type="date" required value="${esc(t?.date || TODAY)}"></label>`}</div>
-    <div class="f2"><label><span id="f-amt-lbl">Tutar</span><input id="f-amount" inputmode="decimal" required placeholder="0,00" value="${amtStr(t?.amount)}"></label>
+    <div class="f2"><label><span id="f-amt-lbl">Tutar</span><span style="display:flex;gap:6px"><input id="f-amount" inputmode="decimal" required placeholder="0,00" value="${amtStr(t?.fx ? t.fx.amt : t?.amount)}" style="flex:1;min-width:0">${type !== "transfer" ? `<select id="f-cur" aria-label="Para birimi" style="width:auto;flex:none">${FX_CURS.map(c => `<option value="${c}" ${c === (t?.fx?.cur || accAsset(acc(accId) || S.accounts[0])) ? "selected" : ""}>${esc(unitOf(c) === "₺" ? "TL" : c)}</option>`).join("")}</select>` : ""}</span></label>
     ${type === "transfer" ? `<label>Tarih<input id="f-date" type="date" required value="${esc(t?.date || TODAY)}"></label>` : `<label id="f-rate-row" hidden><span id="f-rate-lbl">Kur</span><input id="f-rate" inputmode="decimal" value="${t?.rate ? amtStr(t.rate) : ""}"></label>`}</div>
     ${type === "transfer" ? `<label id="f-toamt-row" hidden><span id="f-toamt-lbl">Giriş miktarı</span><input id="f-toamt" inputmode="decimal" value="${t?.toAmount != null ? amtStr(t.toAmount) : ""}"></label>` : ""}
+    ${type !== "transfer" ? `<div id="f-fx-row" class="f2" hidden><label><span id="f-fxrate-lbl">Kur</span><input id="f-fxrate" inputmode="decimal" value="${t?.fx?.rate ? amtStr(t.fx.rate) : ""}"></label>
+      <label><span id="f-fxacc-lbl">Hesaptan düşen</span><input id="f-fxacc" inputmode="decimal" value="${t?.fx && t.fx.exact ? amtStr(t.amount) : ""}" placeholder="kura göre hesaplanır"></label></div>` : ""}
     <p id="f-conv" class="small-note" style="margin:0" hidden></p>
     ${type === "gider" ? `<label id="f-inst-row" hidden>Taksit<select id="f-inst">${INST_OPTS.map(n => `<option value="${n}" ${n === (+t?.inst || 1) ? "selected" : ""}>${n === 1 ? "Peşin (tek çekim)" : n + " taksit"}</option>`).join("")}</select></label><p id="f-inst-note" class="small-note" style="margin:0" hidden></p>` : ""}
     ${type !== "transfer" ? catFields(type, t?.category, t?.sub) + `<label>Cari<select id="f-con">${conOpts(t?.contactId || "")}</select></label>` : ""}
@@ -1185,12 +1188,30 @@ function updateTxnUnits() {
   $("#f-amt-lbl").textContent = `Tutar (${amtUnit(a)})`;
   const amt = parseAmt($("#f-amount").value), conv = $("#f-conv");
   conv.hidden = true;
+  // başka para birimiyle yapılan gelir/gider (ör. USD yazılım aboneliği TL karttan)
+  const cs = $("#f-cur"); let fxOn = false;
+  if (cs) {
+    const isCur = assetOf(code)[3] === "Para"; cs.hidden = !isCur;
+    if (!cs.value || !FX_CURS.includes(cs.value)) cs.value = isCur ? code : "TRY";
+    [...cs.options].forEach(o => { o.textContent = o.value === code ? (o.value === "TRY" ? "TL" : o.value) + " (hesap)" : (o.value === "TRY" ? "TL" : o.value); });
+    const fc = isCur ? cs.value : code, fx = fc !== code, row = $("#f-fx-row"); row.hidden = !fx;
+    if (fx) {
+      fxOn = true; if ($("#f-rate-row")) $("#f-rate-row").hidden = true;
+      $("#f-amt-lbl").textContent = `Tutar (${fc === "TRY" ? "₺" : fc})`;
+      const live = rateOf(fc) / (rateOf(code) || 1), ri = $("#f-fxrate"); $("#f-fxrate-lbl").textContent = `Kur (1 ${fc === "TRY" ? "₺" : fc} = ? ${amtUnit(a)})`;
+      ri.placeholder = live ? String(Math.round(live * 10000) / 10000).replace(".", ",") + (rateSource(fc) === "canlı" ? " (güncel)" : "") : "";
+      $("#f-fxacc-lbl").textContent = `Hesaptan düşen (${amtUnit(a)})`;
+      const r = parseAmt(ri.value) || live, exact = parseAmt($("#f-fxacc").value), calc = amt > 0 && r ? Math.round(amt * r * 100) / 100 : null;
+      $("#f-fxacc").placeholder = calc ? String(calc).replace(".", ",") + " (kura göre)" : "kura göre hesaplanır";
+      if (amt > 0) { conv.hidden = false; conv.textContent = exact > 0 ? `${fmtAsset(amt, fc)} → hesaptan ${fmtAsset(exact, code)} düşer (gerçek kur ${String(Math.round(exact / amt * 10000) / 10000).replace(".", ",")})` : calc ? `${fmtAsset(amt, fc)} ≈ ${fmtAsset(calc, code)} hesaptan düşer · ${parseAmt(ri.value) ? "girilen kur" : "güncel kur"}. Bankadaki tutar farklıysa "Hesaptan düşen"e yaz.` : "Kur bulunamadı; kuru ya da hesaptan düşen tutarı yaz."; }
+    }
+  }
   if ($("#f-inst-row")) {
     const show = type === "gider" && isCredit(a), n = +$("#f-inst").value || 1; $("#f-inst-row").hidden = !show;
     const note = $("#f-inst-note"); note.hidden = !(show && n > 1);
     if (show && n > 1) note.textContent = `Aylık ${amt > 0 ? money(amt / n) : "—"} × ${n} ay. Kart limitinden tamamı (${amt > 0 ? money(amt) : "toplam"}) şimdi düşer; harcama analizi ve dönem içi harcamalar her aya bir taksit yazar.`;
   }
-  if (type !== "transfer") {
+  if (type !== "transfer" && !fxOn) {
     const row = $("#f-rate-row"); row.hidden = code === "TRY";
     if (code !== "TRY") {
       $("#f-rate-lbl").textContent = `Kur (1 ${unitOf(code)} = ? ₺)`;
@@ -1198,7 +1219,7 @@ function updateTxnUnits() {
       const r = parseAmt(inp.value) || rateOf(code);
       if (amt > 0 && r) { conv.hidden = false; conv.textContent = `≈ ${money(amt * r)} · ${assetOf(code)[1]} için ${rateSource(code) === "canlı" && !parseAmt(inp.value) ? "güncel kur" : "girilen kur"} kullanılıyor`; }
     }
-  } else {
+  } else if (type === "transfer") {
     const b = acc($("#f-to").value), c2 = accAsset(b), row = $("#f-toamt-row"); row.hidden = code === c2;
     if (code !== c2) {
       $("#f-toamt-lbl").textContent = `Giriş miktarı (${amtUnit(b)})`;
@@ -1503,7 +1524,7 @@ function accountDetail(a) {
     if (m !== cur) { cur = m; const net = sum(rows.filter(x => monthKey(x.date) === m), x => sg(x) * amtIn(x)); h += `<div class="dhead"><span>${mfmtL.format(pd(m + "-01"))}</span><span class="num ${net < 0 ? "neg" : "pos"}">${code === "TRY" ? signed(net) : fmtAsset(net, code)}</span></div>`; }
     const s = sg(t), other = t.type === "transfer" ? acc(t.accountId === a.id ? t.toAccountId : t.accountId) : null;
     h += `<div class="row click" data-edit-txn="${esc(t.id)}"><div style="min-width:0"><div class="t">${esc(t.type === "transfer" ? (s > 0 ? "← " : "→ ") + (other ? accName(other) : "?") : txLabel(t))}</div>
-      <div class="m">${dshort(t.date)} · ${esc(t.type === "transfer" ? "Transfer" : catLabel(t))}${instN(t) ? ` · <span class="pill acc">${instN(t)} taksit</span>` : ""}${isMove(t) ? ` · <span class="pill">analiz dışı</span>` : ""}</div></div>
+      <div class="m">${dshort(t.date)} · ${esc(t.type === "transfer" ? "Transfer" : catLabel(t))}${t.fx ? ` · <span class="pill acc">${esc(fmtAsset(t.fx.amt, t.fx.cur))}</span>` : ""}${instN(t) ? ` · <span class="pill acc">${instN(t)} taksit</span>` : ""}${isMove(t) ? ` · <span class="pill">analiz dışı</span>` : ""}</div></div>
       <div class="amt ${s > 0 ? "pos" : "neg"}">${s > 0 ? "+" : "−"}${fmtAsset(amtIn(t), t.type === "transfer" && t.toAccountId === a.id ? code : txAsset(t))}</div></div>`;
   }
   return `<section class="panel" id="accDetail"><div class="ph" style="align-items:flex-start"><div style="min-width:0">
@@ -2310,6 +2331,15 @@ function submitForm(f) {
       const c = resolveCat(f, type); if (!c) { toast("Yeni kategorinin adını yaz."); return; }
       o.category = c.category; o.sub = c.sub; o.contactId = v("#f-con");
       if (code !== "TRY") o.rate = parseAmt(v("#f-rate")) || rateOf(code) || null;
+      const fc = $("#f-cur") && !$("#f-cur").hidden ? v("#f-cur") : code;
+      if (fc && fc !== code) { // döviz işlem: hesaba hesabın biriminde yazılır, orijinal tutar ve kur saklanır
+        const fa = o.amount, live = rateOf(fc) / (rateOf(code) || 1), r = parseAmt(v("#f-fxrate")) || live, exact = parseAmt(v("#f-fxacc"));
+        if (!(fa > 0)) { toast("Tutarı yaz."); return; }
+        if (!(exact > 0) && !(r > 0)) { toast("Kuru ya da hesaptan düşen tutarı yaz."); return; }
+        o.amount = exact > 0 ? exact : Math.round(fa * r * 100) / 100;
+        o.fx = { cur: fc, amt: fa, rate: Math.round(o.amount / fa * 10000) / 10000, ...(exact > 0 ? { exact: true } : {}) };
+        if (code !== "TRY") delete o.rate;
+      }
       const n = type === "gider" && isCredit(acc(o.accountId)) ? +v("#f-inst") || 1 : 1; if (n > 1) o.inst = n;
     }
     ls.set("kd-last-acc", o.accountId);
@@ -2538,7 +2568,7 @@ document.addEventListener("input", e => {
     if (ids.length) { const cur = idsFromInput($("#f-ids").value); $("#f-ids").value = [...new Set([...cur, ...ids])].map(idLabel).join(", "); }
     if (n) toast(`SMS'ten ${n} bilgi dolduruldu`);
   }
-  if (["f-amount", "f-rate", "f-toamt", "f-inst"].includes(e.target.id) && $("#frm")?.dataset.kind === "txn") updateTxnUnits();
+  if (["f-amount", "f-rate", "f-toamt", "f-inst", "f-fxrate", "f-fxacc"].includes(e.target.id) && $("#frm")?.dataset.kind === "txn") updateTxnUnits();
   if (e.target.id === "f-open") updateOpenConv();
   if (["f-limit", "f-avail"].includes(e.target.id)) { const L = parseAmt($("#f-limit").value), A = parseAmt($("#f-avail").value), h = $("#f-avail-hint"); if (L > 0 && A >= 0 && $("#f-avail").value) h.innerHTML = `Kaydedince kart borcu <b>${money(L - A)}</b> olarak ayarlanacak (limitin %${Math.round((L - A) / L * 100)} kadarı kullanılmış).`; }
   if (e.target.id === "fq") { ui.q = e.target.value; ui._focusQ = true; render(); }
@@ -2561,7 +2591,7 @@ document.addEventListener("change", async e => {
     const sub = $("#f-sub"); if (sub) { sub.innerHTML = subOptions(e.target.dataset.ctype, nw ? "" : e.target.value, ""); $("#f-sub-new").hidden = true; }
   }
   else if (e.target.id === "f-sub") { const nw = e.target.value === "__new", ni = $("#f-sub-new"); ni.hidden = !nw; if (nw) ni.focus(); }
-  else if (["f-acc", "f-to"].includes(e.target.id) && $("#frm")?.dataset.kind === "txn") updateTxnUnits();
+  else if (["f-acc", "f-to", "f-cur"].includes(e.target.id) && $("#frm")?.dataset.kind === "txn") { if (e.target.id === "f-acc" && $("#f-cur")) $("#f-cur").value = ""; updateTxnUnits(); }
   else if (e.target.id === "f-kind" && $("#f-limit-box")) {
     const k = e.target.value, g = $("#f-group"); $("#f-limit-box").hidden = !isCredit({ kind: k });
     $("#f-group-lbl").textContent = k === "nakit" ? "Grup" : "Banka / Grup"; g.placeholder = k === "nakit" ? "Nakit" : "Örn. Ziraat";
