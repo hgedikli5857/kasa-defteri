@@ -40,6 +40,7 @@ function instInfo(d) { // ekstre satırı: "2/6 TAKSİT", "TAKSİT 2/6", "409,90
 }
 let TODAY = iso(new Date());
 const nf = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const nf2 = new Intl.NumberFormat("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const nf0 = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", maximumFractionDigits: 0 });
 const cf = new Intl.NumberFormat("tr-TR", { notation: "compact", maximumFractionDigits: 1 });
 const money = n => nf.format(n || 0);
@@ -152,8 +153,15 @@ async function fetchRates(force) {
   if (!force && RATES.fetchedAt && Date.now() - RATES.fetchedAt < 15 * 60e3) return;
   try {
     const r = await fetch(RATE_URL, { cache: "no-store" }); if (!r.ok) throw new Error(r.status);
-    const j = await r.json(), auto = {};
-    for (const [code] of ASSETS) if (code !== "TRY" && j[code] && +j[code].Buying > 0) auto[code] = +j[code].Buying;
+    // Sunucu bazen JSON'u yarım gönderiyor (dosya sonu kesik): önce düzgün ayrıştır, olmazsa her kuru metinden tek tek oku
+    const txt = await r.text(), auto = {}; let j = null; try { j = JSON.parse(txt); } catch (_) { }
+    for (const [code] of ASSETS) {
+      if (code === "TRY") continue;
+      let v = j && j[code] ? +j[code].Buying : NaN;
+      if (!(v > 0)) { const m = txt.match(new RegExp('"' + code + '"\\s*:\\s*\\{[^}]*?"Buying"\\s*:\\s*"?([\\d.]+)')); if (m) v = +m[1]; }
+      if (v > 0) auto[code] = v;
+    }
+    if (!j) j = { Update_Date: (txt.match(/"Update_Date"\s*:\s*"([^"]+)"/) || [])[1] };
     if (!Object.keys(auto).length) throw new Error("boş");
     Object.assign(RATES, { auto, date: j.Update_Date || new Date().toISOString(), fetchedAt: Date.now(), failed: false, retries: 0 });
     ls.set("kd-rates", JSON.stringify({ auto, date: RATES.date, fetchedAt: RATES.fetchedAt }));
@@ -2004,6 +2012,8 @@ async function readStatement(file, password) {
     imp.file = file;
     let lastP = -1; const prog = p => { const k = Math.round(p * 100); if (k - lastP >= 5) { lastP = k; toast(`Görsel okunuyor… %${k}`); } };
     const rows = img && files.length > 1 ? await IMP.imagesToRows(files, prog) : await IMP.fileToRows(file, password, prog);
+    if (img) { try { (imp.imgUrls || []).forEach(u => URL.revokeObjectURL(u)); } catch (_) { } imp.imgUrls = files.map(f => URL.createObjectURL(f)); }
+    imp.ocr = img;
     if (img) file = { name: files.length > 1 ? `${files.length} ekran görüntüsü` : file.name };
     if (!rows || !rows.length) { toast("Dosyada okunabilir satır yok."); return; }
     setupImp(rows, file);
@@ -2021,7 +2031,7 @@ function setupImp(rows, file) {
     const sig = IMP.headerSignature(headers);
     let map = null; try { map = JSON.parse(ls.get("kd-map:" + sig) || "null"); } catch (e) { }
     if (!map) { map = IMP.guessMapping(headers, rows.slice(hIdx + 1)); const ex = IMP.extract(rows, hIdx, map); if (acc(imp.accountId)?.kind === "kredi kartı" && ex.length && ex.filter(x => x.amount > 0).length > ex.length * 0.6) map.invert = true; }
-    Object.assign(imp, { fileName: file.name, rows, hIdx, headers, sig, map, fixOpening: false, unitFor: null, unitMode: null, tradeAcc: tradeAccDefault(acc(imp.accountId)) });
+    Object.assign(imp, { fileName: file.name, rows, hIdx, headers, sig, map, fixOpening: false, edits: {}, unitFor: null, unitMode: null, tradeAcc: tradeAccDefault(acc(imp.accountId)) });
     imp.meta = rows.meta || null;
     imp.ids = [...new Set([...(rows.ids || IMP.statementIds(rows.slice(0, 15).map(r => (r || []).join(" ")).join("\n"))), ...IMP.statementIds("", file && file.name)])];
     if (imp.meta && isCredit(acc(imp.accountId))) { if (imp.meta.limit) imp.limit = imp.meta.limit; if (imp.meta.cutDay) imp.cut = imp.meta.cutDay; }
@@ -2065,6 +2075,7 @@ function tradeAccDefault(a) { const t = S.accounts.filter(x => accAsset(x) === "
 function buildImpItems() {
   const U = impUnitSetup(), m = imp.map;
   let ext = IMP.extract(imp.rows, imp.hIdx, m, U.code === "TRY" ? {} : { qty: U.mode === "unit", qtyCol: U.mode === "col" ? m.qtyCol : -1 });
+  if (imp.edits) ext = ext.map(x => imp.edits[x.row] != null ? { ...x, amount: imp.edits[x.row], edited: true } : x); // elle düzeltilen tutarlar
   if (U.code !== "TRY" && U.mode !== "unit") ext = ext.map(x => {
     const sg = x.amount < 0 ? -1 : 1, tl = Math.abs(x.amount);
     if (U.mode === "col" && x.q) return { ...x, amount: sg * x.q, tl, price: Math.round(tl / x.q * 100) / 100 };
@@ -2174,6 +2185,8 @@ function renderImport() {
       ${imp.meta && (imp.meta.limit || imp.meta.cutDay || imp.meta.debt != null) ? `<p class="small-note" style="margin:0;color:var(--pos)">Ekstreden okundu: ${[imp.meta.limit ? "kart limiti " + money0(imp.meta.limit) : "", imp.meta.cutDay ? "kesim günü " + imp.meta.cutDay : "", imp.meta.debt != null ? "dönem borcu " + money(imp.meta.debt) : "", imp.meta.minPay != null ? "asgari " + money(imp.meta.minPay) : "", imp.meta.dueDate ? "son ödeme " + dshort(imp.meta.dueDate) : ""].filter(Boolean).join(" · ")}</p>` : ""}
       <p class="small-note" style="margin:0">Yazarsan kartın borcu bankadaki rakama sabitlenir; ekstredeki geçmiş harcamalar limiti ikinci kez düşürmez, sadece analizde kullanılır.</p></div>` : ""}
     ${bi && !isCredit(acc(imp.accountId)) ? `<div class="notice ${Math.abs(bi.diff) < 0.01 ? "" : "warn"}" style="margin:0"><span>${Math.abs(bi.diff) < 0.01 ? `<b>Bakiye tutuyor.</b> Bankadaki bakiye (${dshort(bi.date)}) ile uygulamadaki bakiye aynı: <b class="num">${fmtAsset(bi.bank, IC)}</b>` : `<b>Bakiye farkı var.</b> Bankada <b class="num">${fmtAsset(bi.bank, IC)}</b>, içe aktarma sonrası uygulamada <b class="num">${fmtAsset(bi.after, IC)}</b> olacak (fark ${IC === "TRY" ? signed(bi.diff) : fmtAsset(bi.diff, IC)}).<br><label style="display:flex;gap:8px;align-items:center;margin-top:6px;color:var(--ink);font-size:.9rem"><input type="checkbox" id="imp-fix" style="width:auto" ${imp.fixOpening ? "checked" : ""}> Açılış bakiyesini düzelterek eşitle (${fmtAsset((+acc(imp.accountId).opening || 0) + bi.diff, IC)})</label>`}</span></div>` : ""}
+    ${imp.ocr && items.length ? `<div class="notice warn" style="margin:0;display:block"><b>Görselden okundu, tutarları kontrol et.</b> Yanlış okunan tutarın üstüne dokunup düzelt (başına − gider, + gelir). Çıkan paranın işareti görseldeki kırmızı/yeşil renkten anlaşılır.
+      ${(imp.imgUrls || []).length ? `<details style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">Görseli göster</summary><div style="display:grid;gap:8px;margin-top:8px;max-height:60vh;overflow:auto">${imp.imgUrls.map(u => `<img src="${u}" alt="Ekstre görseli" style="width:100%;border:1px solid var(--line);border-radius:8px">`).join("")}</div></details>` : ""}</div>` : ""}
     ${impAnalysis(sel)}
     ${items.length ? `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
       <label style="display:flex;gap:8px;align-items:center;font-size:.88rem"><input type="checkbox" id="imp-all" style="width:auto" ${sel.length === items.length ? "checked" : ""}> Tümünü seç</label>
@@ -2184,7 +2197,7 @@ function renderImport() {
         <div style="min-width:0"><div class="t" style="font-size:.9rem;font-weight:500">${esc(x.desc || "(açıklama yok)")}</div>
           <div class="m">${dshort(x.date)}${x.dup ? ` · <span style="color:var(--warn)">${x.dup === "var" ? "zaten eklendi" : x.dup === "ücret" ? "taksit ücret satırı alışveriş tutarıyla okunmuş: eklenmez" : x.dup === "kart" ? "kart ödemesi: gelir değil, bankadan karta transfer olarak gir" : x.dup === "taksit" ? `${x.instPart.k}/${x.instPart.n}. taksit: alışveriş zaten kayıtlı` : x.dup === "elle" ? `elle girdiğin ${money(x.manAmt)} kaydın yerine geçer` : x.dup === "elle?" ? `elle girdiğin ${money(x.manAmt)} (${esc(x.manCat)}) kaydınla aynı olabilir` : "olası tekrar"}</span>` : ""}${x.inst ? ` · <span class="pill acc">${x.inst} taksit · aylık ${money(x.instPer)}</span> <span class="muted">(ekstrede ${x.instPart.k}/${x.inst}. taksit)</span>` : ""}${x.contactId ? ` · ${esc(con(x.contactId)?.name || "")}` : ""}</div>
           ${x.trade && imp.tradeAcc ? `<span class="pill acc" style="margin-top:4px;display:inline-block">⇄ ${x.amount > 0 ? "←" : "→"} ${esc(accName(acc(imp.tradeAcc)) || "")}</span>` : `<select class="imp-cat" data-i="${i}" style="margin-top:4px;padding:4px 6px;font-size:.82rem;width:auto;max-width:100%">${impCatOptions(x.type, x.cat)}</select>`}</div>
-        <div class="amt ${x.amount > 0 ? "pos" : "neg"}" style="font-size:.92rem;text-align:right">${x.amount > 0 ? "+" : "−"}${fmtAsset(x.amt, IC)}${IC !== "TRY" ? `<div class="muted" style="font-size:.74rem;font-weight:400">${x.tl ? money(x.tl) : "≈ " + money(x.amt * (rateOf(IC) || 0))}${x.est ? " · kurla" : ""}</div>` : ""}</div></div>`).join("")}
+        <div class="amt ${x.amount > 0 ? "pos" : "neg"}" style="font-size:.92rem;text-align:right">${imp.ocr && !x.trade ? `<input class="imp-amt num ${x.amount > 0 ? "pos" : "neg"}" data-i="${i}" inputmode="decimal" value="${x.amount > 0 ? "+" : "−"}${nf2.format(x.amt)}" aria-label="Tutar" style="width:118px;text-align:right;padding:4px 6px;font-size:.9rem${x.edited ? ";border-color:var(--accent)" : ""}">` : `${x.amount > 0 ? "+" : "−"}${fmtAsset(x.amt, IC)}`}${IC !== "TRY" ? `<div class="muted" style="font-size:.74rem;font-weight:400">${x.tl ? money(x.tl) : "≈ " + money(x.amt * (rateOf(IC) || 0))}${x.est ? " · kurla" : ""}</div>` : ""}</div></div>`).join("")}
     </div>${items.length > 600 ? `<p class="small-note">İlk 600 satır gösteriliyor; hepsi eklenecek.</p>` : ""}` : ""}
     <div class="foot"><button type="button" class="btn" data-act="import-stmt">Başka dosya</button><div class="r"><button type="button" class="btn" data-close>Vazgeç</button>
       <button type="button" class="btn primary" data-act="imp-commit" ${sel.length || imp.fixOpening ? "" : "disabled"}>${sel.length} işlemi ekle</button></div></div>
@@ -2558,6 +2571,12 @@ document.addEventListener("change", async e => {
   else if (e.target.closest && e.target.closest("#impPanel")) {
     const t = e.target, i = t.dataset.i != null ? +t.dataset.i : -1;
     if (t.classList.contains("imp-sel")) { imp.items[i].sel = t.checked; renderImport(); }
+    else if (t.classList.contains("imp-amt")) { // görselden yanlış okunan tutarı düzelt
+      const x = imp.items[i], raw = t.value.trim().replace(/−/g, "-"), v = Math.abs(parseAmt(raw.replace(/^[+-]\s*/, "")));
+      if (!(v > 0)) { toast("Geçerli bir tutar yaz (örn. 1.250,00)."); return renderImport(); }
+      const sg = /^-/.test(raw) ? -1 : /^\+/.test(raw) ? 1 : (x.amount < 0 ? -1 : 1);
+      imp.edits = imp.edits || {}; imp.edits[x.row] = sg * v; buildImpItems(); renderImport(); toast("Tutar düzeltildi");
+    }
     else if (t.classList.contains("imp-cat")) { // aynı açıklamalı diğer satırlara da uygula
       const k = IMP.learnKey(imp.items[i].desc), prev = imp.items[i].cat; let n = 0;
       imp.items.forEach((x, j) => { if (j === i || (k && IMP.learnKey(x.desc) === k && x.cat === prev)) { x.cat = t.value; if (j !== i) n++; } });

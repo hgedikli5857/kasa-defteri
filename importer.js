@@ -180,30 +180,72 @@ function loadTess() {
 }
 export const isImage = (file, head) => /^image\//.test(file.type || "") || /\.(png|jpe?g|webp|bmp|gif)$/i.test(file.name || "") ||
   (head && ((head[0] === 0x89 && head[1] === 0x50) || (head[0] === 0xff && head[1] === 0xd8)));
-// Küçük ekran görüntülerini büyüt (OCR doğruluğu artar)
+// Görseli OCR'a hazırla: büyüt (~2000 px genişlik), gri tona çevir, kontrastı aç, karanlık temayı ters çevir.
+// Renkli kopya da saklanır: tutarın rengi (kırmızı/yeşil) işaretini belirlemekte kullanılır.
 async function prepImage(file) {
   try {
-    const bmp = await createImageBitmap(file), k = bmp.width < 1400 ? Math.min(3, 1400 / bmp.width) : 1;
-    if (k <= 1.05) return file;
+    const bmp = await createImageBitmap(file), k = Math.min(3, Math.max(1, 2000 / bmp.width));
     const c = document.createElement("canvas"); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
-    const g = c.getContext("2d"); g.imageSmoothingQuality = "high"; g.drawImage(bmp, 0, 0, c.width, c.height);
-    return c;
-  } catch (e) { return file; }
+    const g = c.getContext("2d", { willReadFrequently: true }); g.imageSmoothingQuality = "high"; g.drawImage(bmp, 0, 0, c.width, c.height);
+    const im = g.getImageData(0, 0, c.width, c.height), d = im.data, color = new Uint8ClampedArray(d), hist = new Uint32Array(256), n = d.length / 4;
+    for (let i = 0; i < d.length; i += 4) { const y = Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]); d[i] = y; hist[y]++; }
+    let acc = 0, lo = 0, hi = 255, mean = 0; for (let v = 0; v < 256; v++) mean += v * hist[v]; mean /= n;
+    for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc < n * 0.01) lo = v; if (acc < n * 0.99) hi = v; }
+    if (hi - lo < 40) { lo = 0; hi = 255; }
+    const dark = mean < 110, sc = 255 / Math.max(1, hi - lo);
+    for (let i = 0; i < d.length; i += 4) { let v = (d[i] - lo) * sc; v = v < 0 ? 0 : v > 255 ? 255 : v; if (dark) v = 255 - v; d[i] = d[i + 1] = d[i + 2] = v; }
+    g.putImageData(im, 0, 0);
+    return { img: c, color, w: c.width, h: c.height, dark };
+  } catch (e) { return { img: file, color: null }; }
+}
+// Bir kelimenin yazı rengi: arka plandan farklı piksellerin ortalaması → "r" (kırmızı), "g" (yeşil) ya da ""
+function wordColor(P, b) {
+  if (!P || !P.color) return "";
+  const { color, w } = P; let r = 0, gg = 0, bl = 0, cnt = 0;
+  const x0 = Math.max(0, b.x0 | 0), x1 = Math.min(w - 1, b.x1 | 0), y0 = Math.max(0, b.y0 | 0), y1 = Math.min(P.h - 1, b.y1 | 0);
+  const bgI = (y0 * w + x0) * 4, br = color[bgI], bgg = color[bgI + 1], bb = color[bgI + 2];
+  for (let y = y0; y <= y1; y += 2) for (let x = x0; x <= x1; x += 2) {
+    const i = (y * w + x) * 4, dr = color[i] - br, dg = color[i + 1] - bgg, db = color[i + 2] - bb;
+    if (dr * dr + dg * dg + db * db < 60 * 60) continue; r += color[i]; gg += color[i + 1]; bl += color[i + 2]; cnt++;
+  }
+  if (cnt < 6) return ""; r /= cnt; gg /= cnt; bl /= cnt;
+  if (r > gg + 45 && r > bl + 35) return "r";
+  if (gg > r + 30 && gg > bl + 5) return "g";
+  return "";
+}
+// OCR'ın rakamlarda yaptığı tipik hatalar: O→0, l/I/|→1, S→5; "1.250.00" / "1,250,00" → "1.250,00"
+export function fixOcrNum(t) {
+  t = String(t || "");
+  for (let k = 0; k < 4; k++) { const u = t.replace(/(?<=\d)[Oo](?=[\d.,Oo])|(?<=[\d.,])[Oo](?=[\dOo]|$|\s)/g, "0").replace(/(?<=\d)[Il|](?=[\d.,])|(?<=[\d.,])[Il|](?=\d)|(?<![A-Za-zÇĞİÖŞÜçğıöşü\d])[Il|](?=[.,]\d{3})/g, "1").replace(/(?<=\d)S(?=\d)/g, "5"); if (u === t) break; t = u; }
+  t = t
+    .replace(/(\d),\s(\d{2})(?!\d)/g, "$1,$2").replace(/(^|[\s+\-−–(])[HhtbŁ£€¥](?=\d{1,3}(?:[.,]\d{3})*[.,]\d{2}(?!\d))/g, "$1₺").replace(/[–—]\s?(?=₺?\s?\d)/g, "-");
+  return t.replace(/(?<![\d.,])(\d{1,3}(?:[.,]\d{3})+)[.,](\d{2})(?![\d.,])/g, (m, a, b) => a.replace(/[.,]/g, ".") + "," + b)
+    .replace(/(?<![\d.,])(\d+)\.(\d{2})(?=\s?(?:TL|TRY|₺)\b)/g, "$1,$2");
 }
 export async function imageLines(file, onProgress, page = 1) {
   const T = await loadTess();
   if (!tessWorker) tessWorker = await T.createWorker("tur", 1, { langPath: TESS_LANG, logger: m => { if (onProgress && m.status === "recognizing text") onProgress(m.progress); } });
-  const { data } = await tessWorker.recognize(await prepImage(file), {}, { blocks: true, text: true });
+  try { await tessWorker.setParameters({ preserve_interword_spaces: "1", user_defined_dpi: "300" }); } catch (e) { }
+  const P = await prepImage(file);
+  const { data } = await tessWorker.recognize(P.img, {}, { blocks: true, text: true });
   const lines = [];
   for (const b of data.blocks || []) for (const pa of b.paragraphs || []) for (const ln of pa.lines || []) {
-    const ws = (ln.words || []).filter(w => w.text && w.text.trim() && w.confidence > 20).sort((a, b) => a.bbox.x0 - b.bbox.x0);
+    // tutar gibi görünen kelimeler düşük güvenle okunsa da tutulur (₺ işareti OCR'ı şaşırtıyor)
+    const ws = (ln.words || []).filter(w => w.text && w.text.trim() && (w.confidence > 20 || /\d[.,]\d{2}/.test(w.text))).sort((a, b) => a.bbox.x0 - b.bbox.x0);
     if (!ws.length) continue;
     const h = Math.max(...ws.map(w => w.bbox.y1 - w.bbox.y0)) || 10, cells = [];
-    for (const w of ws) { const c = cells[cells.length - 1]; if (c && w.bbox.x0 - c.x1 < h * 1.2) { c.s += " " + w.text; c.x1 = w.bbox.x1; } else cells.push({ s: w.text, x0: w.bbox.x0, x1: w.bbox.x1 }); }
+    for (const w of ws) {
+      let tx = fixOcrNum(w.text);
+      // işaretsiz tutar: kırmızı yazılmışsa çıkan (−), yeşilse giren (+) para
+      if (/\d[.,]\d{2}(?!\d)/.test(tx) && !/^[-+−(]/.test(tx.trim())) { const col = wordColor(P, w.bbox); if (col) tx = (col === "r" ? "-" : "+") + tx.replace(/^\s+/, ""); }
+      const c = cells[cells.length - 1]; if (c && w.bbox.x0 - c.x1 < h * 1.2) { c.s += " " + tx; c.x1 = w.bbox.x1; } else cells.push({ s: tx, x0: w.bbox.x0, x1: w.bbox.x1 });
+    }
+    // aynı hücrede ayrı okunmuş tutar parçaları: "- 1.250,00" / "1.250, 00"
+    cells.forEach(c => { c.s = fixOcrNum(c.s.replace(/([-+−])\s+(?=₺?\s?\d)/g, "$1")); });
     lines.push({ page, y: -ln.bbox.y0, h, cells });
   }
   lines.sort((a, b) => b.y - a.y);
-  return { lines, text: data.text || "" };
+  return { lines, text: fixOcrNum(data.text || "") };
 }
 // Gevşek tarih: "10 Haziran 2026", "10 Haz", "10.06.2026 14:32", "Bugün", "Dün"
 const AYK = { OCA: 1, SUB: 2, MAR: 3, NIS: 4, MAY: 5, HAZ: 6, TEM: 7, AGU: 8, EYL: 9, EKI: 10, KAS: 11, ARA: 12 };
@@ -221,7 +263,7 @@ export function findDate(t, today = new Date()) {
   if (/\bDUN\b/.test(T)) { const d = new Date(today); d.setDate(d.getDate() - 1); return iso(d); }
   return null;
 }
-const AMT_RX = /[-+−]?\s?(?:₺\s?)?\d{1,3}(?:[.\s]\d{3})*,\d{2}(?:\s?(?:TL|TRY|₺))?/g;
+const AMT_RX = /[-+−–]?\s?(?:₺\s?)?\d{1,3}(?:[.\s]\d{3})*,\d{2}(?:\s?(?:TL|TRY|₺))?/g;
 // Mobil uygulama listeleri: her harekette açıklama + tutar aynı satırda, tarih aynı / alt / üst satırda ya da gün başlığında
 function linesToAppRows(lines) {
   const rows = [["Tarih", "Açıklama", "Tutar"]], txt = lines.map(l => l.cells.map(c => c.s).join(" ").replace(/\s+/g, " ").trim());
@@ -242,6 +284,9 @@ function linesToAppRows(lines) {
     if (!date || /BAKIYE|LIMIT|TOPLAM|BORC|PUAN|ASGARI|ORANI|KESIM|SON ODEME TARIHI/.test(norm(desc))) return;
     rows.push([date, desc, amount]);
   });
+  // bazı tutarlar açıkça "+" (gelen) ise işaretsiz olanlar çıkan paradır (uygulamalar gideri çoğu zaman işaretsiz gösterir)
+  const sg = rows.slice(1).map(r => /^[+]/.test(r[2]) ? 1 : /^[-−]/.test(r[2]) ? -1 : 0);
+  if (sg.includes(1) && !sg.includes(-1) && sg.includes(0)) rows.forEach((r, k) => { if (k && sg[k - 1] === 0) r[2] = "-" + r[2]; });
   return rows.length > 1 ? rows : null;
 }
 export async function imagesToRows(files, onProgress) {

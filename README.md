@@ -121,6 +121,9 @@ Banka hareketlerini tek tek yazmak yerine:
 - Dosyada bakiye sütunu varsa, uygulamadaki bakiye bankayla karşılaştırılır; istersen açılış bakiyesi düzeltilerek eşitlenir.
 - Bir satırın kategorisini değiştirince benzer açıklamalı satırlar da değişir; uygulama sonraki ekstrelerde bunu hatırlar.
 
+## Ekstre görseli (ekran görüntüsü) okuma
+Görsel önce büyütülüp kontrastı açılır, karanlık tema otomatik çevrilir. OCR'ın rakam hataları (O→0, l→1, "1.250.00"→"1.250,00", ₺'nin H/t okunması) düzeltilir. İşaretsiz tutarlarda işaret yazının renginden (kırmızı = çıkan, yeşil = giren) ya da aynı görseldeki "+" tutarlardan anlaşılır. Önizlemede tutarlar düzenlenebilir: yanlış okunanı üstüne dokunup düzelt; **Görseli göster** ile karşılaştır.
+
 ## Kredi kartı özeti
 Kart hesabını düzenle (veya ekstre içe aktarırken) şu dört alanı bankanın uygulamasından bakarak doldur: **Toplam limit**, **Kullanılabilir limit**, **Dönem içi harcamalar**, **Hesap kesim günü**.
 Özet ve Hesaplar ekranında banka uygulamasındaki gibi görünür: kullanılabilir limit, dönem içi harcamalar, toplam borç, önceki dönem/taksit farkı ve dönem tarihleri. Sonra eklediğin harcamalar iki rakama da otomatik yansır; kesim gününde dönem harcaması sıfırlanır.
