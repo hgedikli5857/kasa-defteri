@@ -1994,9 +1994,13 @@ function openImport(accountId) {
   const accId = accountId || (acc(ls.get("kd-imp-acc")) ? ls.get("kd-imp-acc") : S.accounts[0].id);
   imp = { accountId: accId };
   openSheet("Banka ekstresi içe aktar", `<div class="form">
-    <p style="margin:0">İnternet veya mobil bankacılıktan <b>hesap hareketlerini PDF, Excel ya da CSV</b> olarak indir, sonra burada seç. <b>Ekran görüntüsü / fotoğraf</b> da olur (birden fazla seçebilirsin). Kayıtlar eklenmeden önce sana gösterilir.</p>
+    <p style="margin:0">İnternet veya mobil bankacılıktan <b>hesap hareketlerini PDF, Excel ya da CSV</b> olarak indir, sonra burada seç. <b>Ekran görüntüsü</b> ya da ekrandan/kâğıttan <b>çektiğin fotoğraf</b> da olur (birden fazla seçebilirsin). Kayıtlar eklenmeden önce sana gösterilir.</p>
     <label>Hangi hesabın ekstresi?<select id="imp-acc">${accOpts(accId)}</select></label>
-    <button class="btn primary" type="button" data-act="imp-pick" style="justify-content:center;padding:12px">Dosya seç</button>
+    <div class="f2"><button class="btn primary" type="button" data-act="imp-pick" style="justify-content:center;padding:12px">Dosya / görsel seç</button>
+    <button class="btn primary" type="button" data-act="imp-cam" style="justify-content:center;padding:12px">📷 Fotoğraf çek</button></div>
+    <input type="file" id="camFile" accept="image/*" capture="environment" hidden>
+    <details class="small-note"><summary>Ekrandan ya da kâğıttan fotoğraf çekerken</summary>
+      <p>Telefonu ekrana <b>dik ve düz</b> tut, hareket listesi kadrajı doldursun. <b>Parlama ve yansıma</b> olmasın (ekran parlaklığını biraz kıs, ışığı arkana al). Netleşmesi için yazıya dokun. Uzun listeyi birkaç fotoğrafta çek; her birini ayrı ekleyebilirsin. Okunan tutarları eklemeden önce kontrol edip düzeltebilirsin.</p></details>
     <button class="btn" type="button" data-act="gmail" style="justify-content:center;padding:12px">✉ Gmail'deki ekstrelerden seç</button>
     <input type="file" id="stmtFile" multiple accept="image/*,.pdf,.xlsx,.xls,.csv,.txt,.ods,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" hidden>
     ${S.txns.some(t => t.importKey) ? `<button class="btn ghost small" type="button" data-act="imports" style="justify-self:start;padding-left:0">Yüklediğin ekstreler · yanlış yüklemeyi geri al</button>` : ""}
@@ -2491,6 +2495,7 @@ document.addEventListener("click", async e => {
   if (a === "gmail-reset-q") { ls.del("kd-gmail-q"); $("#gm-q").value = GMAIL_Q; return Gmail.search(GMAIL_Q); }
   if (a === "imp-switch") { imp.accountId = el.dataset.acc; imp.unitFor = null; buildImpItems(); renderImport(); toast(`Hesap: ${accName(acc(imp.accountId))}`); return; }
   if (a === "imp-pick") { imp.accountId = $("#imp-acc").value; $("#stmtFile").value = ""; $("#stmtFile").click(); return; }
+  if (a === "imp-cam") { imp.accountId = $("#imp-acc").value; $("#camFile").value = ""; $("#camFile").click(); return; }
   if (a === "imp-commit") { el.disabled = true; el.textContent = "Ekleniyor…"; await commitImport(); return; }
   if (a === "export-json") return saveFile(`kasa-defteri-yedek-${TODAY}.json`, JSON.stringify(snapshotData(), null, 1), "application/json");
   if (a === "import") { $("#importFile").value = ""; $("#importFile").click(); return; }
@@ -2564,6 +2569,7 @@ document.addEventListener("change", async e => {
     if (k === "nakit" && !$("#f-name").value) $("#f-name").placeholder = "Örn. Cüzdan, Kasa, Evdeki dolar";
   }
   else if (e.target.id === "f-asset") { const code = e.target.value; $("#f-open-lbl").textContent = `Açılış bakiyesi (${amtUnit({ asset: code })})`; updateOpenConv(); }
+  else if (e.target.id === "camFile") { const f = e.target.files && e.target.files[0]; if (f) readStatement(f); }
   else if (e.target.id === "stmtFile") { const fs = [...(e.target.files || [])]; if (fs.length) readStatement(fs.length > 1 ? fs.filter(f => IMP.isImage(f)).length === fs.length ? fs : fs[0] : fs[0]); }
   else if (e.target.id === "imp-acc" && imp) { imp.accountId = e.target.value; }
   else if (e.target.id === "b-freq") { $("#b-month-row").hidden = e.target.value !== "yıllık"; }

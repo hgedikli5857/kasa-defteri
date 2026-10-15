@@ -122,7 +122,7 @@ Banka hareketlerini tek tek yazmak yerine:
 - Bir satırın kategorisini değiştirince benzer açıklamalı satırlar da değişir; uygulama sonraki ekstrelerde bunu hatırlar.
 
 ## Ekstre görseli (ekran görüntüsü) okuma
-Görsel önce büyütülüp kontrastı açılır, karanlık tema otomatik çevrilir. OCR'ın rakam hataları (O→0, l→1, "1.250.00"→"1.250,00", ₺'nin H/t okunması) düzeltilir. İşaretsiz tutarlarda işaret yazının renginden (kırmızı = çıkan, yeşil = giren) ya da aynı görseldeki "+" tutarlardan anlaşılır. Önizlemede tutarlar düzenlenebilir: yanlış okunanı üstüne dokunup düzelt; **Görseli göster** ile karşılaştır.
+Görsel önce büyütülüp kontrastı açılır, karanlık tema otomatik çevrilir. OCR'ın rakam hataları (O→0, l→1, "1.250.00"→"1.250,00", ₺'nin H/t okunması) düzeltilir. İşaretsiz tutarlarda işaret yazının renginden (kırmızı = çıkan, yeşil = giren) ya da aynı görseldeki "+" tutarlardan anlaşılır. **📷 Fotoğraf çek** ile bilgisayar ekranından ya da kâğıt ekstreden doğrudan fotoğraf da alınır: eğiklik otomatik düzeltilir, parlama/gölge dengelenir; az satır okunursa görsel güçlü ön işlemeyle ikinci kez okunur. Önizlemede tutarlar düzenlenebilir: yanlış okunanı üstüne dokunup düzelt; **Görseli göster** ile karşılaştır.
 
 ## Kredi kartı özeti
 Kart hesabını düzenle (veya ekstre içe aktarırken) şu dört alanı bankanın uygulamasından bakarak doldur: **Toplam limit**, **Kullanılabilir limit**, **Dönem içi harcamalar**, **Hesap kesim günü**.

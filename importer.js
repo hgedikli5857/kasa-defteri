@@ -182,7 +182,44 @@ export const isImage = (file, head) => /^image\//.test(file.type || "") || /\.(p
   (head && ((head[0] === 0x89 && head[1] === 0x50) || (head[0] === 0xff && head[1] === 0xd8)));
 // Görseli OCR'a hazırla: büyüt (~2000 px genişlik), gri tona çevir, kontrastı aç, karanlık temayı ters çevir.
 // Renkli kopya da saklanır: tutarın rengi (kırmızı/yeşil) işaretini belirlemekte kullanılır.
-async function prepImage(file) {
+async function prepImage(file, heavy) {
+  if (!heavy) return prepLight(file);
+  try {
+    const bmp = await createImageBitmap(file), k = Math.min(3, 2000 / bmp.width); // telefon fotoğrafları küçültülür, ekran görüntüleri büyütülür
+    const ang = skewAngle(bmp); // eğik çekilmiş fotoğrafı düzelt
+    const c = document.createElement("canvas"), W = c.width = Math.round(bmp.width * k), H = c.height = Math.round(bmp.height * k);
+    const g = c.getContext("2d", { willReadFrequently: true }); g.imageSmoothingQuality = "high";
+    if (Math.abs(ang) >= 0.4) { g.fillStyle = "#fff"; g.fillRect(0, 0, W, H); g.translate(W / 2, H / 2); g.rotate(ang * Math.PI / 180); g.translate(-W / 2, -H / 2); }
+    g.drawImage(bmp, 0, 0, W, H); g.setTransform(1, 0, 0, 1, 0, 0);
+    const im = g.getImageData(0, 0, W, H), d = im.data, color = new Uint8ClampedArray(d), Y = new Float32Array(W * H);
+    for (let p = 0, i = 0; p < Y.length; p++, i += 4) Y[p] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    // karanlık tema mı? (kenarlardaki monitör çerçevesi yanıltmasın diye ortadaki bölgenin ortancası)
+    const cen = []; for (let y = H * 0.2 | 0; y < H * 0.8; y += 7) for (let x = W * 0.2 | 0; x < W * 0.8; x += 7) cen.push(Y[y * W + x]);
+    cen.sort((a, b) => a - b); const dark = cen[cen.length >> 1] < 110;
+    if (dark) for (let p = 0; p < Y.length; p++) Y[p] = 255 - Y[p];
+    // ışık düzeltme (ekran/kâğıt fotoğrafında parlama, gölge, kenar kararması): arka plan = bloklardaki en açık ton, metin ona bölünür
+    const B = Math.max(16, Math.round(Math.min(W, H) / 40)), bw = Math.ceil(W / B), bh = Math.ceil(H / B), bg = new Float32Array(bw * bh);
+    for (let by = 0; by < bh; by++) for (let bx = 0; bx < bw; bx++) {
+      const vals = []; for (let y = by * B; y < Math.min(H, by * B + B); y += 2) for (let x = bx * B; x < Math.min(W, bx * B + B); x += 2) vals.push(Y[y * W + x]);
+      vals.sort((a, b) => a - b); bg[by * bw + bx] = vals[Math.floor(vals.length * 0.9)] || 255;
+    }
+    const bg2 = new Float32Array(bg.length); // komşu bloklarla yumuşat
+    for (let by = 0; by < bh; by++) for (let bx = 0; bx < bw; bx++) { let m = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const yy = Math.min(bh - 1, Math.max(0, by + dy)), xx = Math.min(bw - 1, Math.max(0, bx + dx)); m = Math.max(m, bg[yy * bw + xx]); } bg2[by * bw + bx] = m; }
+    const bgAt = (x, y) => { const fx = Math.min(bw - 1.001, Math.max(0, x / B - 0.5)), fy = Math.min(bh - 1.001, Math.max(0, y / B - 0.5)), x0 = fx | 0, y0 = fy | 0, ax = fx - x0, ay = fy - y0;
+      const v = (xx, yy) => bg2[Math.min(bh - 1, yy) * bw + Math.min(bw - 1, xx)]; return (v(x0, y0) * (1 - ax) + v(x0 + 1, y0) * ax) * (1 - ay) + (v(x0, y0 + 1) * (1 - ax) + v(x0 + 1, y0 + 1) * ax) * ay; };
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const p = y * W + x, b0 = bgAt(x, y), b = Math.max(40, b0); let v = b0 < 70 ? 255 : Y[p] / b * 255; v = v > 255 ? 255 : v; const i = p * 4; d[i] = d[i + 1] = d[i + 2] = v; }
+    // kontrast: en koyu %1 → siyah
+    const hist = new Uint32Array(256); for (let i = 0; i < d.length; i += 4) hist[d[i] | 0]++;
+    let acc = 0, lo = 0; for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc < Y.length * 0.01) lo = v; }
+    const sc = 255 / Math.max(60, 250 - lo);
+    // gri (soluk) yazıları koyulaştır: tarih/saat satırları genelde açık gri
+    for (let i = 0; i < d.length; i += 4) { let v = (d[i] - lo) * sc; v = v < 0 ? 0 : v > 255 ? 255 : v; v = 255 * Math.pow(v / 255, 1.8); d[i] = d[i + 1] = d[i + 2] = v; }
+    g.putImageData(im, 0, 0);
+    return { img: c, color, w: W, h: H, dark };
+  } catch (e) { return { img: file, color: null }; }
+}
+// Hafif hazırlık (ekran görüntüleri için en iyisi): büyüt, gri ton, kontrast, karanlık temayı çevir
+async function prepLight(file) {
   try {
     const bmp = await createImageBitmap(file), k = Math.min(3, Math.max(1, 2000 / bmp.width));
     const c = document.createElement("canvas"); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
@@ -197,6 +234,26 @@ async function prepImage(file) {
     g.putImageData(im, 0, 0);
     return { img: c, color, w: c.width, h: c.height, dark };
   } catch (e) { return { img: file, color: null }; }
+}
+// Eğiklik açısı (derece): küçük gri kopyada koyu pikselleri farklı açılarla satırlara izdüşürüp en keskin satır yapısını veren açı
+function skewAngle(bmp) {
+  try {
+    const w = 500, h = Math.round(bmp.height * w / bmp.width), c = document.createElement("canvas"); c.width = w; c.height = h;
+    const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(bmp, 0, 0, w, h);
+    const d = g.getImageData(0, 0, w, h).data, Y = new Float32Array(w * h); for (let p = 0, i = 0; p < Y.length; p++, i += 4) Y[p] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    // yerel arka plandan belirgin farklı pikseller = yazı (açık ve koyu temada çalışır)
+    const pts = [], R = 6;
+    for (let y = R; y < h - R; y += 1) for (let x = R; x < w - R; x += 1) { const v = Y[y * w + x], m = (Y[(y - R) * w + x] + Y[(y + R) * w + x] + Y[y * w + x - R] + Y[y * w + x + R]) / 4; if (Math.abs(v - m) > 45) pts.push(x - w / 2, y - h / 2); }
+    if (pts.length < 200) return 0;
+    let best = 0, bestS = -1;
+    for (let a = -8; a <= 8.001; a += 0.25) {
+      const t = a * Math.PI / 180, sn = Math.sin(t), cs = Math.cos(t), bins = new Float32Array(h * 2);
+      for (let i = 0; i < pts.length; i += 2) { const r = Math.round(pts[i] * sn + pts[i + 1] * cs + h); if (r >= 0 && r < bins.length) bins[r]++; }
+      let sc = 0; for (let i = 1; i < bins.length; i++) { const df = bins[i] - bins[i - 1]; sc += df * df; }
+      if (sc > bestS) { bestS = sc; best = a; }
+    }
+    return best;
+  } catch (e) { return 0; }
 }
 // Bir kelimenin yazı rengi: arka plandan farklı piksellerin ortalaması → "r" (kırmızı), "g" (yeşil) ya da ""
 function wordColor(P, b) {
@@ -222,11 +279,11 @@ export function fixOcrNum(t) {
   return t.replace(/(?<![\d.,])(\d{1,3}(?:[.,]\d{3})+)[.,](\d{2})(?![\d.,])/g, (m, a, b) => a.replace(/[.,]/g, ".") + "," + b)
     .replace(/(?<![\d.,])(\d+)\.(\d{2})(?=\s?(?:TL|TRY|₺)\b)/g, "$1,$2");
 }
-export async function imageLines(file, onProgress, page = 1) {
+export async function imageLines(file, onProgress, page = 1, heavy = false) {
   const T = await loadTess();
   if (!tessWorker) tessWorker = await T.createWorker("tur", 1, { langPath: TESS_LANG, logger: m => { if (onProgress && m.status === "recognizing text") onProgress(m.progress); } });
   try { await tessWorker.setParameters({ preserve_interword_spaces: "1", user_defined_dpi: "300" }); } catch (e) { }
-  const P = await prepImage(file);
+  const P = await prepImage(file, heavy);
   const { data } = await tessWorker.recognize(P.img, {}, { blocks: true, text: true });
   const lines = [];
   for (const b of data.blocks || []) for (const pa of b.paragraphs || []) for (const ln of pa.lines || []) {
@@ -292,12 +349,26 @@ function linesToAppRows(lines) {
 export async function imagesToRows(files, onProgress) {
   let all = [], meta = null;
   for (let i = 0; i < files.length; i++) {
-    const { lines, text } = await imageLines(files[i], p => onProgress && onProgress((i + p) / files.length), i + 1);
+    const rowsOf = lines => { let rows = null; const table = lines.length ? linesToTable(lines) : null;
+      if (table) { const h = detectHeader(table), m = guessMapping(table[h], table.slice(h + 1)); const ex = extract(table, h, m); if (ex.length) rows = [["Tarih", "Açıklama", "Tutar"], ...ex.map(x => [x.date, x.desc, String(x.amount).replace(".", ",")])]; }
+      if (!rows) rows = linesToAppRows(lines);
+      if (!rows) { const rx = linesToRegexRows(lines); if (rx) rows = rx.map(r => r.slice(0, 3)); }
+      return rows; };
+    const prog = (k, n) => p => onProgress && onProgress((i + (k + p) / n) / files.length);
+    let { lines, text } = await imageLines(files[i], prog(0, 1), i + 1, false);
+    let rows = rowsOf(lines);
+    // az satır çıktıysa (fotoğraf: eğik, parlama, gölge) güçlü ön işlemeyle tekrar oku, iyi olanı al
+    const amtLines = lines.filter(l => /\d[.,]\d{2}(?!\d)/.test(l.cells.map(c => c.s).join(" "))).length, got = rows ? rows.length - 1 : 0;
+    if (got < 3 || got < amtLines * 0.6) {
+      const r2 = await imageLines(files[i], prog(0.5, 1), i + 1, true), rows2 = rowsOf(r2.lines);
+      if (rows2 && rows2.length - 1 > got) {
+        // güçlü okumada "₺" bazen rakam sanılır (₺67,25 → 167,25): hafif okumadaki tutarla başı fazla rakam farkı varsa onu al
+        const dig = v => String(v).replace(/[^\d]/g, ""), light = new Set(lines.flatMap(l => (l.cells.map(c => c.s).join(" ").match(/\d{1,3}(?:\.\d{3})*,\d{2}/g) || []).map(dig)));
+        rows2.slice(1).forEach(r => { const d0 = dig(r[2]); if (d0.length > 3 && !light.has(d0) && light.has(d0.slice(1))) { const t = d0.slice(1); r[2] = (/^\s*[-−]/.test(r[2]) ? "-" : /^\s*\+/.test(r[2]) ? "+" : "") + t.slice(0, -2) + "," + t.slice(-2); } });
+        rows = rows2; text = r2.text;
+      }
+    }
     meta = meta || statementMeta(text);
-    let rows = null; const table = lines.length ? linesToTable(lines) : null;
-    if (table) { const h = detectHeader(table), m = guessMapping(table[h], table.slice(h + 1)); const ex = extract(table, h, m); if (ex.length) rows = [["Tarih", "Açıklama", "Tutar"], ...ex.map(x => [x.date, x.desc, String(x.amount).replace(".", ",")])]; }
-    if (!rows) rows = linesToAppRows(lines);
-    if (!rows) { const rx = linesToRegexRows(lines); if (rx) rows = rx.map(r => r.slice(0, 3)); }
     if (rows) all = all.length ? all.concat(rows.slice(1)) : rows;
   }
   if (!all.length) throw new Error("Görselde hesap hareketi okunamadı. Ekran görüntüsü net ve tarih + tutar görünür olmalı.");
@@ -553,7 +624,7 @@ const SUBRULES = [
 ];
 export function guessSub(desc) { const d = " " + norm(desc) + " "; for (const [s, keys] of SUBRULES) if (keys.some(x => d.includes(x))) return s; return ""; }
 export function headerSignature(headers) { return headers.map(norm).filter(Boolean).join("|").slice(0, 300); }
-export const _dbg = { linesToAppRows: (...a) => linesToAppRows(...a), pdfLines: (...a) => pdfLines(...a), linesToTable: (...a) => linesToTable(...a), linesToRegexRows: (...a) => linesToRegexRows(...a) };
+export const _dbg = { skewAngle: (...a) => skewAngle(...a), prepImage: (...a) => prepImage(...a), linesToAppRows: (...a) => linesToAppRows(...a), pdfLines: (...a) => pdfLines(...a), linesToTable: (...a) => linesToTable(...a), linesToRegexRows: (...a) => linesToRegexRows(...a) };
 export const normText = s => norm(s);
 // Taksitli alışverişin ücret satırı: "Vade Farki - FAVORAHOME ANKARA TR" → "FAVORAHOME ANKARA TR"
 export function feeBase(desc) { const m = String(desc || "").match(/^\s*(VADE FARK[Iİı]|KKDF|BSMV)\s*-\s*(.+)$/i); return m ? m[2].trim() : ""; }
