@@ -185,7 +185,7 @@ export const isImage = (file, head) => /^image\//.test(file.type || "") || /\.(p
 async function prepImage(file, heavy) {
   if (!heavy) return prepLight(file);
   try {
-    const bmp = await createImageBitmap(file), k = Math.min(3, 2000 / bmp.width); // telefon fotoğrafları küçültülür, ekran görüntüleri büyütülür
+    const bmp = await createImageBitmap(file), th = textHeight(bmp), k = th ? Math.min(3, Math.max(0.6, 40 / th)) : Math.min(3, 2000 / bmp.width); // yazı ~40 px; ölçülemezse 2000 px genişlik
     const ang = skewAngle(bmp); // eğik çekilmiş fotoğrafı düzelt
     const c = document.createElement("canvas"), W = c.width = Math.round(bmp.width * k), H = c.height = Math.round(bmp.height * k);
     const g = c.getContext("2d", { willReadFrequently: true }); g.imageSmoothingQuality = "high";
@@ -221,7 +221,7 @@ async function prepImage(file, heavy) {
 // Hafif hazırlık (ekran görüntüleri için en iyisi): büyüt, gri ton, kontrast, karanlık temayı çevir
 async function prepLight(file) {
   try {
-    const bmp = await createImageBitmap(file), k = Math.min(3, Math.max(1, 2000 / bmp.width));
+    const bmp = await createImageBitmap(file), th = textHeight(bmp), k = (typeof window !== "undefined" && window.__K) ? (window.__K > 5 ? window.__K / bmp.width : window.__K) : th ? Math.min(3, Math.max(1, 40 / th)) : Math.min(3, Math.max(1, 2000 / bmp.width)); // yazı ~40 px olacak şekilde büyüt
     const c = document.createElement("canvas"); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
     const g = c.getContext("2d", { willReadFrequently: true }); g.imageSmoothingQuality = "high"; g.drawImage(bmp, 0, 0, c.width, c.height);
     const im = g.getImageData(0, 0, c.width, c.height), d = im.data, color = new Uint8ClampedArray(d), hist = new Uint32Array(256), n = d.length / 4;
@@ -234,6 +234,18 @@ async function prepLight(file) {
     g.putImageData(im, 0, 0);
     return { img: c, color, w: c.width, h: c.height, dark };
   } catch (e) { return { img: file, color: null }; }
+}
+// Tipik yazı yüksekliği (px): satır satır "mürekkep" sayısı, ardışık dolu satır gruplarının ortanca uzunluğu
+function textHeight(bmp) {
+  try {
+    const sc = Math.min(1, 1600 / bmp.width), w = Math.round(bmp.width * sc), h = Math.round(bmp.height * sc), c = document.createElement("canvas"); c.width = w; c.height = h;
+    const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(bmp, 0, 0, w, h);
+    const d = g.getImageData(0, 0, w, h).data, row = new Uint32Array(h);
+    for (let y = 0; y < h; y++) for (let x = 2; x < w - 2; x += 1) { const i = (y * w + x) * 4, j = i - 8, k2 = i + 8; const v = d[i] + d[i + 1] + d[i + 2], a = d[j] + d[j + 1] + d[j + 2], b = d[k2] + d[k2 + 1] + d[k2 + 2]; if (Math.abs(v - a) > 120 || Math.abs(v - b) > 120) row[y]++; }
+    const runs = []; let r = 0; for (let y = 0; y < h; y++) { if (row[y] >= 3) r++; else { if (r >= 4) runs.push(r); r = 0; } }
+    if (runs.length < 5) return 0; runs.sort((a, b) => a - b);
+    return runs[Math.floor(runs.length * 0.25)] / sc; // alt çeyrek: bitişik satırlar birleşip büyük görünmesin
+  } catch (e) { return 0; }
 }
 // Eğiklik açısı (derece): küçük gri kopyada koyu pikselleri farklı açılarla satırlara izdüşürüp en keskin satır yapısını veren açı
 function skewAngle(bmp) {
@@ -285,7 +297,7 @@ export async function imageLines(file, onProgress, page = 1, heavy = false) {
   try { await tessWorker.setParameters({ preserve_interword_spaces: "1", user_defined_dpi: "300" }); } catch (e) { }
   const P = await prepImage(file, heavy);
   const { data } = await tessWorker.recognize(P.img, {}, { blocks: true, text: true });
-  const lines = [];
+  const lines = [], words = [];
   for (const b of data.blocks || []) for (const pa of b.paragraphs || []) for (const ln of pa.lines || []) {
     // tutar gibi görünen kelimeler düşük güvenle okunsa da tutulur (₺ işareti OCR'ı şaşırtıyor)
     const ws = (ln.words || []).filter(w => w.text && w.text.trim() && (w.confidence > 20 || /\d[.,]\d{2}/.test(w.text))).sort((a, b) => a.bbox.x0 - b.bbox.x0);
@@ -295,6 +307,7 @@ export async function imageLines(file, onProgress, page = 1, heavy = false) {
       let tx = fixOcrNum(w.text);
       // işaretsiz tutar: kırmızı yazılmışsa çıkan (−), yeşilse giren (+) para
       if (/\d[.,]\d{2}(?!\d)/.test(tx) && !/^[-+−(]/.test(tx.trim())) { const col = wordColor(P, w.bbox); if (col) tx = (col === "r" ? "-" : "+") + tx.replace(/^\s+/, ""); }
+      words.push({ t: tx, x0: w.bbox.x0, x1: w.bbox.x1, y0: w.bbox.y0, y1: w.bbox.y1, c: w.confidence });
       const c = cells[cells.length - 1]; if (c && w.bbox.x0 - c.x1 < h * 1.2) { c.s += " " + tx; c.x1 = w.bbox.x1; } else cells.push({ s: tx, x0: w.bbox.x0, x1: w.bbox.x1 });
     }
     // aynı hücrede ayrı okunmuş tutar parçaları: "- 1.250,00" / "1.250, 00"
@@ -302,7 +315,7 @@ export async function imageLines(file, onProgress, page = 1, heavy = false) {
     lines.push({ page, y: -ln.bbox.y0, h, cells });
   }
   lines.sort((a, b) => b.y - a.y);
-  return { lines, text: fixOcrNum(data.text || "") };
+  return { lines, words, text: fixOcrNum(data.text || "") };
 }
 // Gevşek tarih: "10 Haziran 2026", "10 Haz", "10.06.2026 14:32", "Bugün", "Dün"
 const AYK = { OCA: 1, SUB: 2, MAR: 3, NIS: 4, MAY: 5, HAZ: 6, TEM: 7, AGU: 8, EYL: 9, EKI: 10, KAS: 11, ARA: 12 };
@@ -346,22 +359,112 @@ function linesToAppRows(lines) {
   if (sg.includes(1) && !sg.includes(-1) && sg.includes(0)) rows.forEach((r, k) => { if (k && sg[k - 1] === 0) r[2] = "-" + r[2]; });
   return rows.length > 1 ? rows : null;
 }
+// Konumlu okuma: her hareketin tarihi sol sütunda (aynı hizada) durur; o tarihten bir sonrakine kadarki bölgede
+// sağdaki tutar o harekete, tarihin altındaki yazı açıklamaya aittir. Soldaki menü ve üstteki tarayıcı yazıları dışarıda kalır.
+const DATE_W = /^\(?(\d{2})[./-]?(\d{2})[./-]?(20\d{2})\b/;
+const AMT_W = /([-+−]?)\s?₺?\s?(\d{1,3}(?:\.\d{3})+,\d{2}|\d{1,6},\d{2})(?!\d)/;
+function wordsToAnchorRows(words, today = new Date()) {
+  if (!words || words.length < 6) return null;
+  const yc = w => (w.y0 + w.y1) / 2, hh = w => w.y1 - w.y0;
+  let ds = words.map(w => { const m = w.t.replace(/\s/g, "").match(DATE_W); if (!m) return null; const mo = +m[2], da = +m[1]; if (mo < 1 || mo > 12 || da < 1 || da > 31) return null; return { w, d: [+m[3], mo, da] }; }).filter(Boolean);
+  if (ds.length < 3) return null;
+  // aynı sütunda hizalı tarihler (açıklamanın içindeki tarihleri ele)
+  const xs = ds.map(x => x.w.x0).sort((a, b) => a - b), mx = xs[xs.length >> 1], h = ds.map(x => hh(x.w)).sort((a, b) => a - b)[ds.length >> 1] || 12;
+  ds = ds.filter(x => Math.abs(x.w.x0 - mx) < h * 5).sort((a, b) => yc(a.w) - yc(b.w));
+  ds = ds.filter((x, i) => i === 0 || yc(x.w) - yc(ds[i - 1].w) > h * 1.2);
+  if (ds.length < 3) return null;
+  const pad = n => String(n).padStart(2, "0"), iso = ([y, m, d]) => `${y}-${pad(m)}-${pad(d)}`, ty = today.getFullYear();
+  // yanlış okunan yıl/gün: liste sıralı, komşularla uyuşmayanı komşuya eşitle
+  ds.forEach(x => { if (Math.abs(x.d[0] - ty) > 1) x.d[0] = ty; x.s = iso(x.d); });
+  ds.forEach((x, i) => { const p = ds[i - 1], n = ds[i + 1]; if (p && n && p.s === n.s && x.s !== p.s) x.s = p.s; else if (p && n) { const lo = p.s < n.s ? p.s : n.s, hi = p.s < n.s ? n.s : p.s; if (x.s < lo || x.s > hi) x.s = p.s; } });
+  const colX = Math.min(...ds.map(x => x.w.x0)) - h * 2.5;
+  // "TL" bazen "7L" okunur (3.190,207L), virgül bazen "4" (296448TL → 296,48)
+  const amtOf = w => { let t = w.t.replace(/\s+(?=[\d,.])/g, "").replace(/(,\d{2})[7T][Ll1I|]$/, "$1TL");
+    let m = t.match(AMT_W);
+    if (!m) { const g = t.match(/^([-+−]?)\D{0,2}(\d[\d.]{3,11})(?:TL|7L|11)$/); if (g) {
+      // virgül ya düşmüş (2.70944 → 2.709,44) ya da rakam sanılmış (296448 → 296,48): binlik nokta varsa düşmüş, yoksa tam kısım 3 haneyi geçemez
+      const raw = g[2], d = raw.replace(/\./g, ""), dropped = /\./.test(raw) || d.length - 2 <= 3, ip = dropped ? d.slice(0, -2) : d.slice(0, -3);
+      m = [null, g[1], ip.replace(/\B(?=(\d{3})+$)/g, ".") + "," + d.slice(-2)]; m.index = 0; } }
+    if (!m) return null; const pre = m.index != null ? t.slice(0, m.index) : ""; const sg = (pre.match(/[-+−]/) || [m[1] || ""])[0].replace("−", "-");
+    return { w, sign: sg, v: m[2] }; };
+  const amts = words.filter(w => w.x0 > colX).map(amtOf).filter(Boolean);
+  const rightX = amts.length ? amts.map(a => a.w.x1).sort((a, b) => a - b)[amts.length >> 1] : Infinity;
+  const rows = [["Tarih", "Açıklama", "Tutar"]];
+  ds.forEach((x, i) => {
+    // bölge: komşu tarihlerle aranın yarısı (açıklama tarihin üstünde ya da altında olabilir)
+    const gaps = ds.slice(1).map((z, j) => yc(z.w) - yc(ds[j].w)).sort((p, q) => p - q), gap = gaps[gaps.length >> 1] || h * 6;
+    const top = i > 0 ? (yc(ds[i - 1].w) + yc(x.w)) / 2 : yc(x.w) - gap / 2, bot = i + 1 < ds.length ? (yc(x.w) + yc(ds[i + 1].w)) / 2 : yc(x.w) + gap / 2;
+    const inR = w => yc(w) >= top && yc(w) < bot;
+    const cand = amts.filter(a => inR(a.w) && Math.abs(a.w.x1 - rightX) < h * 8).sort((a, b) => b.w.x1 - a.w.x1);
+    if (!cand.length) return;
+    const a = cand[0], ax0 = Math.min(...cand.map(c => c.w.x0));
+    const dl = words.filter(w => inR(w) && w !== x.w && w.x0 >= colX && w.x1 < ax0 - h * 0.5 && !cand.some(c => c.w === w));
+    let below = dl.filter(w => Math.abs(yc(w) - yc(x.w)) > h * 0.6), same = dl.filter(w => Math.abs(yc(w) - yc(x.w)) <= h * 0.6);
+    const txt = ws => ws.sort((p, q) => Math.abs(yc(p) - yc(q)) > h * 0.6 ? yc(p) - yc(q) : p.x0 - q.x0).map(w => w.t).join(" ");
+    let desc = txt(below.length ? below : same).replace(/^[-–—]?\s*\d{1,2}[:.]\d{2}\b/, "");
+    // ikon/çöp karakterleri at
+    const tk = desc.split(/\s+/).filter(t => /[A-Za-zÇĞİÖŞÜçğıöşü0-9]{2,}|^[*/&-]$/.test(t));
+    while (tk.length > 1 && tk[0].length <= 2 && !/^[A-ZÇĞİÖŞÜ0-9]+$/.test(tk[0])) tk.shift(); // ikondan gelen "le", "Kö"
+    desc = tk.join(" ").replace(/^[^A-Za-zÇĞİÖŞÜçğıöşü0-9*]+/, "").replace(/\s+/g, " ").trim();
+    rows.push([x.s, desc, (a.sign || "") + a.v]);
+  });
+  while (rows.length > 4 && !rows[rows.length - 1][1]) rows.pop(); // en alttaki yarım (kesilmiş) hareket
+  if (rows.length < 4) return null;
+  rows.anchors = ds.length; // bulunan tarih sayısı: tutarı okunamayan hareket var mı anlamak için
+  const sg = rows.slice(1).map(r => /^\+/.test(r[2]) ? 1 : /^-/.test(r[2]) ? -1 : 0);
+  if (sg.includes(1) && sg.includes(0) && sg.filter(v => v === 1).length < sg.length / 2) rows.forEach((r, k) => { if (k && sg[k - 1] === 0) r[2] = "-" + r[2]; });
+  return rows;
+}
+// İki okumanın (hafif + güçlü) hareket listelerini sırayı koruyarak birleştir: aynı tarih+tutar bir kez, birinde eksik olan diğerinden eklenir
+function mergeRows(A, B) {
+  // asıl liste: daha çok hareket bulan okuma; diğerinden sadece asılda karşılığı olmayan hareketler eklenir
+  if ((B.length || 0) > (A.length || 0)) [A, B] = [B, A];
+  const a = A.slice(1), b = B.slice(1), n = a.length, m = b.length;
+  const w1 = r => (norm(String(r[1] || "")).replace(/II/g, "I").match(/[A-Z0-9]{2,}/) || [""])[0], key = r => r[0] + "|" + w1(r);
+  const S = Array.from({ length: n + 1 }, () => new Int16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) S[i][j] = key(a[i]) === key(b[j]) ? S[i + 1][j + 1] + 1 : Math.max(S[i + 1][j], S[i][j + 1]);
+  const out = [A[0]]; let i = 0, j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && key(a[i]) === key(b[j])) { out.push(a[i]); i++; j++; }
+    else if (j >= m || (i < n && S[i + 1][j] >= S[i][j + 1])) { out.push(a[i]); i++; }
+    else { if (w1(b[j])) out.push(b[j]); j++; }
+  }
+  out.anchors = Math.max(A.anchors || 0, B.anchors || 0);
+  return out;
+}
+// "₺" işareti her tutarda aynı rakam sanılmışsa (₺249,89 → 4249,89): tutarların çoğu aynı rakamla başlıyor ve
+// en az biri binlik ayırıcısız 4+ haneli (biçim bozuk) ise o baştaki rakamı at
+function fixCurrencyGlyph(rows) {
+  if (!rows || rows.length < 5) return rows;
+  const body = rows.slice(1), num = r => String(r[2]).replace(/^[-+−]/, ""), ok = t => /^(\d{1,3}(\.\d{3})*|\d{1,3}),\d{2}$/.test(t);
+  const cnt = {}; body.forEach(r => { const d = num(r)[0]; if (/\d/.test(d)) cnt[d] = (cnt[d] || 0) + 1; });
+  const [d, n] = Object.entries(cnt).sort((a, b) => b[1] - a[1])[0] || [];
+  if (!d || n < 3 || n < body.length * 0.35) return rows;
+  const bad = body.filter(r => num(r)[0] === d && /^\d{4,},/.test(num(r)));
+  if (!bad.length) return rows;
+  const strong = bad.length >= 2; // birden çok bozuk tutar varsa aynı rakamla başlayan geçerli görünenler de (41.045,80 → 1.045,80) düzeltilir
+  body.forEach(r => { const t = num(r); if (t[0] === d && ok(t.slice(1)) && (strong || !ok(t) || /^\d{4,},/.test(t))) r[2] = String(r[2]).replace(t, t.slice(1)); });
+  return rows;
+}
 export async function imagesToRows(files, onProgress) {
   let all = [], meta = null;
   for (let i = 0; i < files.length; i++) {
-    const rowsOf = lines => { let rows = null; const table = lines.length ? linesToTable(lines) : null;
-      if (table) { const h = detectHeader(table), m = guessMapping(table[h], table.slice(h + 1)); const ex = extract(table, h, m); if (ex.length) rows = [["Tarih", "Açıklama", "Tutar"], ...ex.map(x => [x.date, x.desc, String(x.amount).replace(".", ",")])]; }
+    const rowsOf = (lines, words) => { const an = wordsToAnchorRows(words || []); let rows = null; const table = lines.length ? linesToTable(lines) : null;
+      if (table) { const h = detectHeader(table), m = guessMapping(table[h], table.slice(h + 1)); const ex = extract(table, h, m); if (ex.length) rows = [["Tarih", "Açıklama", "Tutar"], ...ex.map(x => [x.date, x.desc, (+x.amount).toFixed(2).replace(".", ",")])]; }
       if (!rows) rows = linesToAppRows(lines);
       if (!rows) { const rx = linesToRegexRows(lines); if (rx) rows = rx.map(r => r.slice(0, 3)); }
-      return rows; };
+      // tarihe göre konumlu okuma (tarih üstte, açıklama altta, tutar sağda ortada) daha çok hareket bulduysa onu kullan
+      if (an && an.length - 1 >= 3 && an.length >= (rows ? rows.length : 0) * 0.7) { const A = an.anchors; rows = fixCurrencyGlyph(an); rows.anchors = A; return rows; }
+      return fixCurrencyGlyph(rows); };
     const prog = (k, n) => p => onProgress && onProgress((i + (k + p) / n) / files.length);
-    let { lines, text } = await imageLines(files[i], prog(0, 1), i + 1, false);
-    let rows = rowsOf(lines);
+    let { lines, words, text } = await imageLines(files[i], prog(0, 1), i + 1, false);
+    let rows = rowsOf(lines, words);
     // az satır çıktıysa (fotoğraf: eğik, parlama, gölge) güçlü ön işlemeyle tekrar oku, iyi olanı al
     const amtLines = lines.filter(l => /\d[.,]\d{2}(?!\d)/.test(l.cells.map(c => c.s).join(" "))).length, got = rows ? rows.length - 1 : 0;
-    if (got < 3 || got < amtLines * 0.6) {
-      const r2 = await imageLines(files[i], prog(0.5, 1), i + 1, true), rows2 = rowsOf(r2.lines);
-      if (rows2 && rows2.length - 1 > got) {
+    if (got < 3 || got < amtLines * 0.6 || (rows && rows.anchors && got < rows.anchors)) {
+      const r2 = await imageLines(files[i], prog(0.5, 1), i + 1, true), rows2 = rowsOf(r2.lines, r2.words);
+      if (rows && rows.anchors && rows2 && rows2.anchors) { rows = mergeRows(rows, rows2); }
+      else if (rows2 && rows2.length - 1 > got) {
         // güçlü okumada "₺" bazen rakam sanılır (₺67,25 → 167,25): hafif okumadaki tutarla başı fazla rakam farkı varsa onu al
         const dig = v => String(v).replace(/[^\d]/g, ""), light = new Set(lines.flatMap(l => (l.cells.map(c => c.s).join(" ").match(/\d{1,3}(?:\.\d{3})*,\d{2}/g) || []).map(dig)));
         rows2.slice(1).forEach(r => { const d0 = dig(r[2]); if (d0.length > 3 && !light.has(d0) && light.has(d0.slice(1))) { const t = d0.slice(1); r[2] = (/^\s*[-−]/.test(r[2]) ? "-" : /^\s*\+/.test(r[2]) ? "+" : "") + t.slice(0, -2) + "," + t.slice(-2); } });
@@ -624,7 +727,7 @@ const SUBRULES = [
 ];
 export function guessSub(desc) { const d = " " + norm(desc) + " "; for (const [s, keys] of SUBRULES) if (keys.some(x => d.includes(x))) return s; return ""; }
 export function headerSignature(headers) { return headers.map(norm).filter(Boolean).join("|").slice(0, 300); }
-export const _dbg = { skewAngle: (...a) => skewAngle(...a), prepImage: (...a) => prepImage(...a), linesToAppRows: (...a) => linesToAppRows(...a), pdfLines: (...a) => pdfLines(...a), linesToTable: (...a) => linesToTable(...a), linesToRegexRows: (...a) => linesToRegexRows(...a) };
+export const _dbg = { fixCurrencyGlyph: (...a) => fixCurrencyGlyph(...a), mergeRows: (...a) => mergeRows(...a), textHeight: (...a) => textHeight(...a), wordsToAnchorRows: (...a) => wordsToAnchorRows(...a), skewAngle: (...a) => skewAngle(...a), prepImage: (...a) => prepImage(...a), linesToAppRows: (...a) => linesToAppRows(...a), pdfLines: (...a) => pdfLines(...a), linesToTable: (...a) => linesToTable(...a), linesToRegexRows: (...a) => linesToRegexRows(...a) };
 export const normText = s => norm(s);
 // Taksitli alışverişin ücret satırı: "Vade Farki - FAVORAHOME ANKARA TR" → "FAVORAHOME ANKARA TR"
 export function feeBase(desc) { const m = String(desc || "").match(/^\s*(VADE FARK[Iİı]|KKDF|BSMV)\s*-\s*(.+)$/i); return m ? m[2].trim() : ""; }
