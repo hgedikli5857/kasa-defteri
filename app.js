@@ -923,12 +923,44 @@ function cardSummary(a) {
 const KATILIM_RX = /KUVEYT|ALBARAKA|TURKIYE FINANS|TÜRKIYE FINANS|ZIRAAT KATILIM|VAKIF KATILIM|EMLAK KATILIM|HAYAT FINANS|DUNYA KATILIM|TOM KATILIM|ENPARA KATILIM/;
 function minRate(a) { if (+a.minRate > 0) return +a.minRate; return KATILIM_RX.test(IMP.normText(groupOf(a) + " " + a.name)) ? 1 : (+a.limit || 0) > 50000 ? 0.4 : 0.2; }
 // Ekstre borcu, asgari ödeme, son ödeme: ekstreden/elle girilen değer; yoksa kesim gününe göre tahmin
+// son ödeme: kartta "son ödeme günü" girildiyse kesimden sonraki o gün, yoksa kesim + 10 gün
+function dueAfter(cut, a) {
+  const day = +a.dueDay; if (!(day >= 1 && day <= 31)) return addDays(cut, 10);
+  const d = pd(cut); let x = cutOn(d.getFullYear(), d.getMonth(), day); if (x <= cut) x = cutOn(d.getFullYear(), d.getMonth() + 1, day); return x;
+}
+// kart borcu hangi hesaptan ödenir: kartta seçilen, yoksa daha önce karta para gönderilen, yoksa ilk TL hesap
+const payAccs = () => S.accounts.filter(x => !isCredit(x) && accAsset(x) === "TRY" && (["banka", "nakit"].includes(x.kind || "banka") || !x.kind) && !x.excl)
+  .sort((x, y) => (isCash(x) - isCash(y)) || valueTRY(y) - valueTRY(x)); // BES, borsa, vadeli gibi hesaplar listelenmez
+function cardPayFrom(a) {
+  if (a.payFrom && acc(a.payFrom) && !isCredit(acc(a.payFrom))) return a.payFrom;
+  const c = {}; S.txns.filter(t => t.type === "transfer" && t.toAccountId === a.id && acc(t.accountId) && !isCredit(acc(t.accountId))).forEach(t => { c[t.accountId] = (c[t.accountId] || 0) + 1; });
+  return Object.entries(c).sort((x, y) => y[1] - x[1])[0]?.[0] || (payAccs().find(x => !x.excl && !isCash(x)) || payAccs()[0] || {}).id || "";
+}
+function cardPayForm(a) {
+  const C = cardSummary(a), D = C ? cardDue(a, C) : null, used = Math.max(0, -balanceOf(a));
+  const opts = [D && D.rest >= 0.01 && !D.est ? ["rest", "Ekstre borcu", D.rest] : null, D && D.minRest >= 0.01 && !D.est && Math.abs(D.minRest - D.rest) >= 0.01 ? ["min", "Asgari", D.minRest] : null, used >= 0.01 ? ["all", "Tüm borç", Math.round(used * 100) / 100] : null].filter(Boolean);
+  const def = opts[0] ? opts[0][2] : "", from = cardPayFrom(a), accs = payAccs();
+  if (!accs.length) { toast("Ödeme için önce bir TL banka ya da nakit hesabı ekle."); return; }
+  openSheet(`${accName(a)} · borç öde`, `<form class="form" id="frm" data-kind="cardpay" data-id="${esc(a.id)}">
+    ${D ? `<div style="border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--surface-2);font-size:.9rem;display:grid;gap:4px">
+      <div style="display:flex;justify-content:space-between;gap:8px"><span>${D.est ? "Ekstre borcu (tahmini)" : "Ekstre borcu"}</span><b class="num">${D.est ? "≈ " : ""}${money(D.rest)}</b></div>
+      <div style="display:flex;justify-content:space-between;gap:8px"><span>Asgari ödeme</span><b class="num">${D.est ? "≈ " : ""}${money(D.minRest)}</b></div>
+      <div style="display:flex;justify-content:space-between;gap:8px"><span>Son ödeme</span><b>${D.est && !a.dueDay ? "≈ " : ""}${dshort(D.due)} · ${D.left < 0 ? `<span class="neg">${-D.left} gün gecikti</span>` : D.left === 0 ? "bugün" : D.left + " gün kaldı"}</b></div>
+      <div style="display:flex;justify-content:space-between;gap:8px"><span class="muted">Toplam kart borcu</span><span class="num muted">${money(used)}</span></div></div>` : ""}
+    ${opts.length ? `<div class="seg" role="group" aria-label="Ödenecek tutar">${opts.map(([k, l, v], i) => `<button type="button" data-payamt="${v}" aria-pressed="${i === 0}">${l}<br><span class="num" style="font-size:.8rem">${money0(v)}</span></button>`).join("")}</div>` : ""}
+    <div class="f2"><label>Ödenecek tutar (₺)<input id="f-amount" inputmode="decimal" required value="${amtStr(def)}" placeholder="0,00"></label>
+    <label>Tarih<input id="f-date" type="date" required value="${TODAY}"></label></div>
+    <label>Hangi hesaptan ödenecek?<select id="f-from">${accs.map(x => `<option value="${esc(x.id)}" ${x.id === from ? "selected" : ""}>${esc(accName(x))} · ${money0(valueTRY(x))}</option>`).join("")}</select></label>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="f-remember" style="width:auto" checked> Bu kartı hep bu hesaptan öde (hatırlatmada da yazar)</label>
+    <p class="small-note" style="margin:0">Ödeme, seçtiğin hesaptan karta <b>transfer</b> olarak kaydedilir: hesabın bakiyesi azalır, kart borcu düşer. Gider sayılmaz (harcamaların zaten kartta kayıtlı).</p>
+    <div class="foot"><span></span><div class="r"><button type="button" class="btn" data-close>Vazgeç</button><button class="btn primary">Ödemeyi kaydet</button></div></div></form>`);
+}
 function cardDue(a, C) {
   C = C || cardSummary(a); if (!C) return null;
   const rate = minRate(a);
   let debt, min, due, date, est = false;
-  if (a.stmtDate && (!C.cut || a.stmtDate >= addDays(C.cut, -3))) { debt = +a.stmtDebt || 0; min = a.minPay != null && a.minPay !== "" ? +a.minPay : debt * rate; due = a.dueDate || addDays(a.stmtDate, 10); date = a.stmtDate; }
-  else if (C.cut) { est = true; date = C.cut; due = addDays(C.cut, 10); debt = null; }
+  if (a.stmtDate && (!C.cut || a.stmtDate >= addDays(C.cut, -3))) { debt = +a.stmtDebt || 0; min = a.minPay != null && a.minPay !== "" ? +a.minPay : debt * rate; due = a.dueDate || dueAfter(a.stmtDate, a); date = a.stmtDate; }
+  else if (C.cut) { est = true; date = C.cut; due = dueAfter(C.cut, a); debt = null; }
   else return null;
   // kesimden sonra karta yapılan ödemeler
   const paid = sum(S.txns.filter(t => t.date > date && ((t.type === "transfer" && t.toAccountId === a.id) || (t.type === "gelir" && t.accountId === a.id))), t => t.type === "transfer" ? (t.toAmount ?? t.amount) : t.amount);
@@ -982,7 +1014,7 @@ function instListHtml(a) {
 function creditCardsPanel() {
   const cards = S.accounts.filter(a => limitInfo(a) && !a.hide); if (!cards.length) return "";
   return `<section class="panel"><div class="ph"><div><h2>Kredi kartlarım</h2><p>Kalan limit ve bu dönemki harcama</p></div></div>
-    <div class="grid g-2" style="gap:10px">${cards.map(a => `<button class="acard" data-open-account="${esc(a.id)}" type="button"><b>${esc((a.group ? a.group + " · " : "") + a.name)}</b>${cardSummaryHtml(a)}</button>`).join("")}</div></section>`;
+    <div class="grid g-2" style="gap:10px">${cards.map(a => `<div class="acard click" data-open-account="${esc(a.id)}" role="button" tabindex="0"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><b>${esc((a.group ? a.group + " · " : "") + a.name)}</b><button type="button" class="btn small primary" data-card-pay="${esc(a.id)}">💳 Öde</button></div>${cardSummaryHtml(a)}</div>`).join("")}</div></section>`;
 }
 function accCard(a) {
   const b = balanceOf(a), tx = S.txns.filter(t => t.accountId === a.id || t.toAccountId === a.id), last = tx.reduce((m, t) => t.date > m ? t.date : m, "");
@@ -991,6 +1023,7 @@ function accCard(a) {
     ${a.excl || a.hide ? `<div style="display:flex;gap:6px;flex-wrap:wrap">${a.excl ? `<span class="pill">toplam dışı</span>` : ""}${a.hide ? `<span class="pill">Özet'te gizli</span>` : ""}</div>` : ""}
     ${accAsset(a) !== "TRY" ? `<div class="muted" style="font-size:.82rem">≈ ${money(valueTRY(a))} · ${esc(assetOf(accAsset(a))[1])}</div>` : ""}
     ${limitInfo(a) ? cardSummaryHtml(a) : isCredit(a) ? `<div class="muted" style="font-size:.78rem">Limit girilmedi · düzenlemek için dokun</div>` : ""}
+    ${isCredit(a) && balanceOf(a) < -0.005 ? `<button type="button" class="btn small primary" data-card-pay="${esc(a.id)}" style="justify-self:start">💳 Borç öde</button>` : ""}
     <div class="muted" style="font-size:.82rem">${tx.length} işlem${last ? ` · son ${dshort(last)}` : ""} · <span style="color:var(--accent)">işlemleri gör ›</span></div></div>`;
 }
 function updateOpenConv() {
@@ -1261,7 +1294,10 @@ function accountForm(a) {
       <label>Asgari ödeme (₺)<input id="f-minpay" inputmode="decimal" value="${a && a.minPay ? amtStr(a.minPay) : ""}" placeholder="Boşsa hesaplanır"></label></div>
       <label>Gelecek dönem taksitleri toplamı (₺) <span class="muted" style="font-weight:400">(bankada "kalan taksit"; boşsa hesaplanır)</span><input id="f-futinst" inputmode="decimal" value="${a && a.futInst != null && a.futInst !== "" ? amtStr(a.futInst) : ""}" placeholder="Örn. 5.403,51"></label>
       <div class="f2"><label>Son ödeme tarihi<input id="f-due" type="date" value="${esc(a?.dueDate || "")}"></label>
-      <label>Asgari ödeme oranı<select id="f-minrate">${opt([["", "Otomatik" + (a ? ` (%${Math.round(minRate({ ...a, minRate: 0 }) * 100)})` : "")], ["0.2", "%20"], ["0.4", "%40"], ["1", "%100 (borcun tamamı)"]], a && a.minRate ? String(a.minRate) : "")}</select></label></div>
+      <label>Son ödeme günü <span class="muted" style="font-weight:400">(ayın kaçı; ekstre yoksa hatırlatma buna göre)</span><input id="f-dueday" inputmode="numeric" value="${a && a.dueDay ? a.dueDay : ""}" placeholder="Örn. 19"></label>
+      <label>Ödeme hatırlatması<select id="f-payremind">${opt(REMIND_OPTS, a && a.payRemind != null && a.payRemind !== "" ? String(a.payRemind) : "3")}</select></label></div>
+      <label>Borç hangi hesaptan ödenir?<select id="f-payfrom"><option value="">— Otomatik —</option>${payAccs().map(x => `<option value="${esc(x.id)}" ${a && a.payFrom === x.id ? "selected" : ""}>${esc(accName(x))}</option>`).join("")}</select></label>
+      <div class="f2"><label>Asgari ödeme oranı<select id="f-minrate">${opt([["", "Otomatik" + (a ? ` (%${Math.round(minRate({ ...a, minRate: 0 }) * 100)})` : "")], ["0.2", "%20"], ["0.4", "%40"], ["1", "%100 (borcun tamamı)"]], a && a.minRate ? String(a.minRate) : "")}</select></label></div>
       <label>Ekstre SMS'ini yapıştır <span class="muted" style="font-weight:400">(borç, asgari ve son ödeme otomatik dolar)</span><textarea id="f-sms" rows="2" placeholder="Değerli müşterimiz, 4311 ile biten kartınızın ekstresi kesildi. Toplam Borç: … Asgari Ödeme Tutarı: … Son Ödeme Tarihi: …"></textarea></label>
       <p class="small-note" style="margin:0" id="f-avail-hint">Kalan limiti bankanın uygulamasından bakıp yazarsan, borç buna göre eşitlenir. Ekstreden gelen tutarlarla oluşan farklar böylece düzelir.</p>
     </div>
@@ -1531,7 +1567,7 @@ function accountDetail(a) {
       <button class="btn ghost small" data-act="acc-back" style="padding:0 0 6px">← Hesaplar</button>
       <h2>${esc(accName(a))} <button type="button" class="star" data-fav="${esc(a.id)}" aria-pressed="${!!a.fav}" title="${a.fav ? "Favorilerden çıkar" : "Favorilere ekle"}">${a.fav ? "★" : "☆"}</button></h2>
       <p>${esc(kindLabel(a.kind))} · bakiye <b class="num ${balanceOf(a) < 0 ? "neg" : ""}">${fmtAsset(balanceOf(a), code)}</b>${code !== "TRY" ? ` ≈ ${money(valueTRY(a))}` : ""}</p></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-edit-account="${esc(a.id)}">Düzenle</button><button class="btn" data-act="import-stmt" data-acc="${esc(a.id)}">⇣ Ekstre</button><button class="btn primary" data-act="new-txn">+ İşlem</button></div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">${isCredit(a) ? `<button class="btn primary" data-card-pay="${esc(a.id)}">💳 Borç öde</button>` : ""}<button class="btn" data-edit-account="${esc(a.id)}">Düzenle</button><button class="btn" data-act="import-stmt" data-acc="${esc(a.id)}">⇣ Ekstre</button><button class="btn primary" data-act="new-txn">+ İşlem</button></div></div>
     ${limitInfo(a) ? `<div style="margin-bottom:12px">${cardSummaryHtml(a)}</div>` : ""}
     <div class="seg" role="group" aria-label="Dönem" style="margin-bottom:10px">${P.map(([k, l]) => `<button type="button" data-acc-per="${k}" aria-pressed="${per === k}">${l}</button>`).join("")}</div>
     <p class="muted" style="margin:0 0 8px;font-size:.84rem">${R.lbl}${per !== "tumu" ? `: ${dshort(R.a)} – ${dshort(R.b)}` : ""}</p>
@@ -1632,6 +1668,16 @@ function viewGiderler() {
       <div class="kpi" style="padding:4px 0"><div class="lbl">Kalan</div><div class="val ${left ? "neg" : ""}">${money(left)}</div></div>
       <div class="kpi" style="padding:4px 0"><div class="lbl">Geciken</div><div class="val ${late ? "neg" : ""}">${late}</div></div></div>
     <div class="list" style="margin-top:10px">${rows.map(row).join("") || `<p class="muted">${all.length ? "Bu ay ödenecek sabit gider yok." : "Henüz sabit gider eklemedin. Aşağıdan hızlıca ekleyebilirsin."}</p>`}</div>
+    ${(() => { // kredi kartı ödemeleri: son ödeme, kalan borç, hangi hesaptan
+      const cards = S.accounts.filter(x => isCredit(x) && (limitInfo(x) || balanceOf(x) < -0.005)); if (!cards.length) return "";
+      return `<div style="margin-top:14px"><div class="dhead" style="padding-left:0"><span>💳 Kredi kartı ödemeleri</span><span>son ödeme · hatırlatma</span></div>${cards.map(c => {
+        const D = limitInfo(c) ? cardDue(c) : null, used = Math.max(0, -balanceOf(c)), src = acc(cardPayFrom(c)), done = D && D.rest < 0.01;
+        const pill = !D ? `<span class="pill">son ödeme günü yok</span>` : done && used < 0.01 ? `<span class="pill">Borç yok</span>` : done ? `<span class="pill pos">Ödendi ✓</span>` : D.left < 0 ? `<span class="pill neg">${-D.left} gün gecikti</span>` : `<span class="pill ${D.left <= 3 ? "warn" : ""}">${D.left === 0 ? "Bugün" : D.left + " gün kaldı"}</span>`;
+        return `<div class="row" style="align-items:center"><div class="click" data-open-account="${esc(c.id)}" style="cursor:pointer;min-width:0;display:flex;gap:10px;align-items:center"><span style="font-size:1.4rem" aria-hidden="true">💳</span>
+          <div style="min-width:0"><div class="t">${esc(accName(c))} ${pill}</div>
+          <div class="m">${D ? `Son ödeme ${D.est && !c.dueDay ? "≈ " : ""}${dshort(D.due)} · asgari ${money0(D.minRest)}` : "Kartı düzenleyip son ödeme gününü gir"}${src ? " · " + esc(accName(src)) + " hesabından" : ""}${+c.payRemind < 0 ? " · hatırlatma kapalı" : ""}</div></div></div>
+          <div style="text-align:right;display:grid;gap:4px;justify-items:end"><div class="amt ${D && !done && D.left < 0 ? "neg" : ""}">${D && !D.est ? money(done ? D.debt : D.rest) : `<span class="muted" style="font-weight:400;font-size:.8rem">borç</span> ${money(used)}`}</div>
+          ${used >= 0.01 ? `<button class="btn small primary" data-card-pay="${esc(c.id)}">Öde</button>` : ""}</div></div>`; }).join("")}</div>`; })()}
     ${BILL_PRESETS.some(p => !used.has(p[0])) ? `<div style="margin-top:14px"><div class="dhead" style="padding-left:0"><span>Hızlı ekle</span></div><div style="display:flex;gap:8px;flex-wrap:wrap">${BILL_PRESETS.filter(p => !used.has(p[0])).map(p => `<button class="btn small" data-bill-preset="${esc(p[0])}">${billIcon(p[0])} ${esc(p[0])}</button>`).join("")}</div></div>` : ""}
     <p class="small-note" style="margin-top:12px">Ekstreden gelen ödemeler (ör. "Başkent Gaz Doğalgaz") otomatik "Ödendi" sayılır. Elle ödediğinde <b>Öde</b>'ye bas. ${nperm === "granted" ? "Son ödeme gününden önce bildirim gelir." : "Hatırlatma için bildirimleri aç ya da gideri düzenleyip <b>Google Takvim'e ekle</b>."}</p></section>`;
 }
@@ -1663,8 +1709,10 @@ function collectReminders(days = 45) {
     out.push({ key: "b:" + r.b.id + ":" + m, due: r.due, from: addDays(r.due, -(+r.b.remind || 0)), title: `${r.b.name} son ödeme ${r.due === TODAY ? "bugün" : dshort(r.due)}`, body: `${r.exp ? "Tahmini " + money(r.exp) + ". " : ""}${r.due < TODAY ? "Gecikti!" : "Ödemeyi unutma."}`, url: "./?tab=giderler" });
   }
   for (const a of S.accounts.filter(x => isCredit(x) && limitInfo(x))) { const D = cardDue(a); if (!D || D.rest < 0.01 || D.due > addDays(TODAY, days) || D.due < addDays(TODAY, -20)) continue;
-    if (D.est && (D.left < 0 || !a.limitSyncAt || a.limitSyncAt.slice(0, 10) < addDays(D.due, -10))) continue; // tahmin güvenilir değilse uyarma
-    out.push({ key: "k:" + a.id + ":" + D.due, due: D.due, from: addDays(D.due, -3), title: `${accName(a)} son ödeme ${D.due === TODAY ? "bugün" : dshort(D.due)}`, body: `Asgari ${money(D.minRest)} · ekstre borcu ${money(D.rest)}${D.est ? " (tahmini)" : ""}`, url: "./?tab=hesaplar" }); }
+    if (+a.payRemind < 0) continue; // kartta hatırlatma kapalı
+    if (D.est && !a.dueDay && (D.left < 0 || !a.limitSyncAt || a.limitSyncAt.slice(0, 10) < addDays(D.due, -10))) continue; // tahmin güvenilir değilse uyarma
+    const src = acc(cardPayFrom(a));
+    out.push({ key: "k:" + a.id + ":" + D.due, due: D.due, from: addDays(D.due, -(a.payRemind != null && a.payRemind !== "" ? +a.payRemind : 3)), title: `${accName(a)} son ödeme ${D.due === TODAY ? "bugün" : dshort(D.due)}`, body: `${D.est ? "Tahmini borç " + money(D.rest) : "Ekstre borcu " + money(D.rest) + " · asgari " + money(D.minRest)}${src ? " · " + accName(src) + " hesabından" : ""}`, url: "./?tab=giderler" }); }
   for (const p of pending()) { if (p.due > addDays(TODAY, days)) continue; const c = con(p.contactId);
     out.push({ key: "p:" + p.id + ":" + p.due, due: p.due, from: addDays(p.due, -(+(p.remind ?? 3) || 0)), title: `${p.dir === "tahsilat" ? "Tahsilat" : "Ödeme"}: ${c ? c.name : (p.note || p.category)} · ${dshort(p.due)}`, body: money(p.amount), url: "./?tab=vadeler" }); }
   return out.sort((a, b) => a.due < b.due ? -1 : 1);
@@ -2360,6 +2408,13 @@ function submitForm(f) {
     if (!o.name) { toast("Ad gir."); return; }
     const i = arr.findIndex(x => x.id === o.id); if (i >= 0) arr[i] = o; else arr.push(o);
     saveBills(arr); toast(id ? "Güncellendi" : `${o.name} eklendi`); closeSheet(); return;
+  } else if (kind === "cardpay") {
+    const card = acc(id), from = v("#f-from"), amount = parseAmt(v("#f-amount"));
+    if (!card || !acc(from)) { toast("Hesap seç."); return; }
+    if (!(amount > 0)) { toast("Ödenecek tutarı yaz."); return; }
+    put("txns", { id: uid8(), type: "transfer", accountId: from, toAccountId: card.id, amount, date: v("#f-date") || TODAY, category: "Transfer", note: `${accName(card)} kart ödemesi` });
+    if ($("#f-remember")?.checked && card.payFrom !== from) put("accounts", { ...card, payFrom: from });
+    toast(`${money(amount)} ödeme kaydedildi · ${accName(acc(from))} → ${accName(card)}`); closeSheet(); return;
   } else if (kind === "vapid") {
     const k = v("#f-vapid").trim(); meta.vapidKey = k;
     if (live()) fb.fs.setDoc(metaRef(), { vapidKey: k }, { merge: true }).catch(e => toast(failMsg(e)));
@@ -2381,6 +2436,8 @@ function submitForm(f) {
       if (v("#f-sdebt") !== "" && sd >= 0 && (sd !== +old.stmtDebt || !old.stmtDate)) { o.stmtDebt = sd; o.stmtDate = o.cutDay ? lastCut(o.cutDay) : TODAY; }
       if (v("#f-minpay") !== "" && mp >= 0) o.minPay = mp; else if (v("#f-minpay") === "") delete o.minPay;
       const mr = +v("#f-minrate"); if (mr > 0) o.minRate = mr; else delete o.minRate;
+      const dd = parseInt(v("#f-dueday"), 10); if (dd >= 1 && dd <= 31) o.dueDay = dd;
+      o.payRemind = +v("#f-payremind"); if (v("#f-payfrom")) o.payFrom = v("#f-payfrom");
       const fi = parseAmt(v("#f-futinst")); if (v("#f-futinst") !== "" && fi >= 0) { if (fi !== +old.futInst) o.futInstDate = TODAY; else o.futInstDate = old.futInstDate || TODAY; o.futInst = fi; } else { delete o.futInst; delete o.futInstDate; }
       if (du) { o.dueDate = du; if (!o.stmtDate && o.stmtDebt) o.stmtDate = o.cutDay ? lastCut(o.cutDay) : TODAY; }
       const sp = parseAmt(v("#f-spent")); if (v("#f-spent") !== "" && sp >= 0) Object.assign(o, spentAnchor(o.id), { syncSpent: sp });
@@ -2432,6 +2489,8 @@ document.addEventListener("click", async e => {
   if (d.fav) { const a = acc(d.fav); if (!a) return; put("accounts", { ...a, fav: !a.fav }); toast(a.fav ? `${a.name} favorilerden çıktı` : `⭐ ${a.name} favorilere eklendi`); return; }
   if (d.openAccount) { if (!acc(d.openAccount)) return; ui.tab = "hesaplar"; ls.set("kd-tab", "hesaplar"); ui.accView = d.openAccount; ui.accQ = ""; ui.accType = ""; closeSheet(); render(); window.scrollTo({ top: 0 }); return; }
   if (d.accPer) { ui.accPer = d.accPer; return render(); }
+  if (d.cardPay) { const a = acc(d.cardPay); if (a) cardPayForm(a); return; }
+  if (d.payamt) { $("#f-amount").value = amtStr(+d.payamt); el.parentNode.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", b === el)); return; }
   if (d.accType != null && el.closest("#accDetail")) { ui.accType = d.accType; return render(); }
   if (d.anScope) { setScope(d.anScope); if (ui.tab !== "ozet") { ui.tab = "ozet"; ls.set("kd-tab", "ozet"); } render(); const s = $("#anPanel"); if (s) s.scrollIntoView({ block: "start" }); return; }
   if (el.hasAttribute("data-close")) return closeSheet();

@@ -124,6 +124,9 @@ Banka hareketlerini tek tek yazmak yerine:
 ## Ekstre görseli (ekran görüntüsü) okuma
 Görsel önce büyütülüp kontrastı açılır, karanlık tema otomatik çevrilir. OCR'ın rakam hataları (O→0, l→1, "1.250.00"→"1.250,00", ₺'nin H/t okunması) düzeltilir. İşaretsiz tutarlarda işaret yazının renginden (kırmızı = çıkan, yeşil = giren) ya da aynı görseldeki "+" tutarlardan anlaşılır. **📷 Fotoğraf çek** ile bilgisayar ekranından ya da kâğıt ekstreden doğrudan fotoğraf da alınır: eğiklik otomatik düzeltilir, parlama/gölge dengelenir; az satır okunursa görsel güçlü ön işlemeyle ikinci kez okunur. Önizlemede tutarlar düzenlenebilir: yanlış okunanı üstüne dokunup düzelt; **Görseli göster** ile karşılaştır.
 
+## Kredi kartı borç ödeme
+Kartta (Hesaplar, hesap detayı, Özet'teki kart, Giderler → Kredi kartı ödemeleri) **💳 Öde**: ekstre borcu / asgari / tüm borç tek dokunuşla seçilir ya da tutar yazılır, **hangi hesaptan ödeneceği** seçilir. Ödeme o hesaptan karta transfer olarak kaydedilir (gider sayılmaz); seçilen hesap kartta hatırlanır. Kartı düzenleyip **son ödeme günü** ve **ödeme hatırlatması** (vade günü … 2 hafta önce, kapalı) seçilir; ekstre yüklenmemiş olsa da son ödemeden önce "… hesabından" bilgisiyle bildirim gelir.
+
 ## Döviz ile gelir/gider
 Yeni işlemde tutarın yanındaki para biriminden **USD, EUR, GBP, CHF, SAR** seçilebilir (ör. TL kredi kartından ödenen 20 USD'lik abonelik). Hesaptan, güncel kurla hesaplanan TL tutarı düşer; bankanın çektiği gerçek TL tutarı **Hesaptan düşen** alanına yazılırsa o kullanılır. Döviz tutarı ve kur işlemde saklanır, listede `$20,00` olarak görünür.
 
