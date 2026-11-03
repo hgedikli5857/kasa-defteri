@@ -124,6 +124,11 @@ Banka hareketlerini tek tek yazmak yerine:
 ## Ekstre görseli (ekran görüntüsü) okuma
 Görsel önce büyütülüp kontrastı açılır, karanlık tema otomatik çevrilir. OCR'ın rakam hataları (O→0, l→1, "1.250.00"→"1.250,00", ₺'nin H/t okunması) düzeltilir. İşaretsiz tutarlarda işaret yazının renginden (kırmızı = çıkan, yeşil = giren) ya da aynı görseldeki "+" tutarlardan anlaşılır. **📷 Fotoğraf çek** ile bilgisayar ekranından ya da kâğıt ekstreden doğrudan fotoğraf da alınır: eğiklik otomatik düzeltilir, parlama/gölge dengelenir; az satır okunursa görsel güçlü ön işlemeyle ikinci kez okunur. Önizlemede tutarlar düzenlenebilir: yanlış okunanı üstüne dokunup düzelt; **Görseli göster** ile karşılaştır.
 
+## Kart SMS'lerinden işlem ekleme
+**İşlemler → 📩 SMS** (ya da mesajlar uygulamasında SMS'e uzun bas → **Paylaş → Kasa Defteri**). Bankanın kart SMS'lerinden tutar, işyeri, tarih/saat, kartın son 4 hanesi, taksit, döviz tutarı ve kalan limit okunur; kart son 4 haneden tanınır (bilinmeyen kart için bir kez hesap seçilir, sonra öğrenilir). Harcama gider, iade gelir, kart ödemesi banka hesabından karta transfer olarak eklenir; kalan limit yazıyorsa kart borcu bankayla eşitlenir; ekstre SMS'i kartın ekstre borcu/asgari/son ödemesini günceller. Doğrulama kodu SMS'leri atlanır, aynı SMS iki kez eklenmez, sonra yüklenen ekstredeki aynı harcama SMS kaydının yerine geçer.
+
+**Tam otomatik:** telefonda MacroDroid (ya da benzeri) ile "SMS alındı (KUVEYT TURK)" → "E-posta gönder (kendi Gmail'ine, konu **KasaSMS**, içerik [sms_message])" makrosu kurulur; SMS ekranındaki "Gmail'deki KasaSMS e-postalarından otomatik ekle" açılır. Uygulama açıkken 15 dakikada bir (ve her açılışta) bu e-postalar okunup işlemler eklenir.
+
 ## Kredi kartı borç ödeme
 Kartta (Hesaplar, hesap detayı, Özet'teki kart, Giderler → Kredi kartı ödemeleri) **💳 Öde**: ekstre borcu / asgari / tüm borç tek dokunuşla seçilir ya da tutar yazılır, **hangi hesaptan ödeneceği** seçilir. Ödeme o hesaptan karta transfer olarak kaydedilir (gider sayılmaz); seçilen hesap kartta hatırlanır. Kartı düzenleyip **son ödeme günü** ve **ödeme hatırlatması** (vade günü … 2 hafta önce, kapalı) seçilir; ekstre yüklenmemiş olsa da son ödemeden önce "… hesabından" bilgisiyle bildirim gelir.
 

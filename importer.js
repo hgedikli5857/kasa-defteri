@@ -731,3 +731,55 @@ export const _dbg = { fixCurrencyGlyph: (...a) => fixCurrencyGlyph(...a), mergeR
 export const normText = s => norm(s);
 // Taksitli alışverişin ücret satırı: "Vade Farki - FAVORAHOME ANKARA TR" → "FAVORAHOME ANKARA TR"
 export function feeBase(desc) { const m = String(desc || "").match(/^\s*(VADE FARK[Iİı]|KKDF|BSMV)\s*-\s*(.+)$/i); return m ? m[2].trim() : ""; }
+
+/* ---------- banka SMS'i → işlem ---------- */
+// Kart harcama / iade / ödeme / ekstre SMS'lerini okur. Banka biçimleri değişebildiği için kalıp yerine anahtar kelime + konum kullanılır.
+const SMS_CUR = { TL: "TRY", TRY: "TRY", "₺": "TRY", USD: "USD", "$": "USD", EUR: "EUR", "€": "EUR", EURO: "EUR", GBP: "GBP", "£": "GBP", CHF: "CHF" };
+export function parseSms(raw, today = new Date()) {
+  const t = String(raw || "").replace(/\s+/g, " ").trim(); if (t.length < 15) return null;
+  const N = norm(t), p2s = n => String(n).padStart(2, "0"), isoD = d => `${d.getFullYear()}-${p2s(d.getMonth() + 1)}-${p2s(d.getDate())}`;
+  if (/DOGRULAMA|SIFRE|ONAY KODU|GUVENLIK KODU|TEK KULLANIMLIK|\bOTP\b|KODUNUZ|KODU\s*:?\s*\d{4,}/.test(N)) return null; // tek kullanımlık kod
+  const k4 = N.match(/\b(\d{4})\s*(?:ILE BITEN|NOLU|NO'LU|NUMARALI|SONLU)|\*{2,}\s?(\d{4})\b|X{2,}\s?(\d{4})\b|\d{4}[\s*X]{4,}(\d{4})\b/);
+  const last4 = k4 ? (k4[1] || k4[2] || k4[3] || k4[4]) : "";
+  if (/EKSTRE/.test(N) && /BORC|ASGARI|SON ODEME/.test(N)) return { kind: "stmt", meta: statementMeta(t), last4, text: t };
+  // tutarlar ve hemen önlerindeki bağlam
+  const toks = [];
+  for (const m of t.matchAll(/([₺$€£])?\s?(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+,\d{1,2}|\d+\.\d{2}(?!\d)|\d+)\s?(TL|TRY|USD|EUR|EURO|GBP|CHF|₺)?(?![\d.,])/gi)) {
+    const pre = norm(t.slice(Math.max(0, m.index - 40), m.index)), post = norm(t.slice(m.index + m[0].length, m.index + m[0].length + 25));
+    const cur = SMS_CUR[(m[3] || m[1] || "").toUpperCase()] || "";
+    if (!cur && !/,\d{2}$/.test(m[2])) continue; // para birimi yoksa en az kuruşlu olmalı (tarih/saat/no karışmasın)
+    if (/\d{2}[./]\d{2}[./]\d{2,4}/.test(t.slice(Math.max(0, m.index - 3), m.index + m[0].length + 6)) && !cur) continue;
+    let v = m[2]; v = /,/.test(v) ? v.replace(/\./g, "").replace(",", ".") : /^\d{1,3}(\.\d{3})+$/.test(v) ? v.replace(/\./g, "") : v;
+    toks.push({ v: +v, cur: cur || "TRY", hasCur: !!cur, pre, post, i: m.index, len: m[0].length });
+  }
+  const isBal = x => /(KULLANILABILIR|KALAN|MEVCUT|TOPLAM)\s*(KART\s*)?(LIMIT|BAKIYE|BORC)\w*\s*:?\s*$|LIMIT\w*\s*:?\s*$|BAKIYE\w*\s*:?\s*$|BORCUNUZ\s*:?\s*$|PUAN\w*\s*:?\s*$/.test(x.pre.slice(-30)) || /^\s*(PUAN|BONUS|CHIP|MIL)\b/.test(x.post);
+  const amts = toks.filter(x => !isBal(x) && x.v > 0);
+  if (!amts.length) return null;
+  if (!/KART|HARCAMA|ALISVERIS|ISLEM|ODEME|IADE|CEKIM|AVANS|TAHSIL|ISYERI|POS|SATIS/.test(N)) return null;
+  // döviz harcama: hem döviz hem TL tutarı varsa hesaba TL yazılır
+  let main = amts.find(x => x.hasCur) || amts[0], fx = null;
+  if (main.cur !== "TRY") { const tl = amts.find(x => x !== main && x.cur === "TRY" && x.hasCur); fx = { cur: main.cur, amt: main.v }; if (tl) main = tl; }
+  const availT = toks.find(x => /KULLANILABILIR\s*(KART\s*)?LIMIT\w*\s*:?\s*$|KALAN\s*LIMIT\w*\s*:?\s*$/.test(x.pre.slice(-30)));
+  const dm = t.match(/\b(\d{1,2})[./](\d{1,2})[./](\d{2,4})(?:\s*(?:-|saat)?\s*(\d{1,2})[:.](\d{2}))?/i);
+  let date = isoD(today), time = "";
+  if (dm) { let y = +dm[3]; if (y < 100) y += 2000; const mo = +dm[2], d = +dm[1]; if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) date = `${y}-${p2s(mo)}-${p2s(d)}`; if (dm[4]) time = `${p2s(dm[4])}:${dm[5]}`; }
+  else { const tm = t.match(/\b(\d{1,2}):(\d{2})\b/); if (tm) time = `${p2s(tm[1])}:${tm[2]}`; }
+  // işlem türü
+  let type = "gider", pay = false, cash = false;
+  if (/IADE|IPTAL/.test(N)) type = "gelir";
+  else if (/(KART\w*|KREDI KARTI\w*)\s*(BORC\w*\s*)?ODEME|ODEMENIZ ALIN|ODEME(NIZ)? YAPILMIS|ODEMENIZ ICIN TESEKKUR|BORC ODEME|TAHSIL EDILMIS/.test(N) && !/ISYERI|ALISVERIS|HARCAMA/.test(N)) { type = "gelir"; pay = true; }
+  if (/NAKIT AVANS|PARA CEKME|PARA CEKIM|ATM/.test(N)) cash = true;
+  const im = N.match(/(\d{1,2})\s*TAKSIT/), inst = im && +im[1] > 1 && +im[1] <= 36 ? +im[1] : 0;
+  // işyeri: "… tarihinde X işyerinden …" → işyeri kelimesinden önceki, son ayraçtan (tarih, saat, "kartınızla", virgül…) sonraki yazı
+  const BND = /(?:\d{1,2}[./]\d{1,2}[./]\d{2,4}|tarihinde|saat|\d{1,2}[:.]\d{2}(?:['’][dt][ae]n?)?|kart[ıi]n[ıi]z\S*|kart\s*no\S*|biten|nolu|numaral\S*|\bile\b|,|:|\(|\))\s*/gi;
+  const after = s0 => { let k = 0; for (const m of s0.matchAll(BND)) k = m.index + m[0].length; return s0.slice(k); };
+  const clean = s0 => s0.replace(/\b(tutarında|tutarinda|tutarlı|tutarli|toplam|adına|adina)\b.*$/i, "").replace(/['’]\s*$/, "").replace(/\s+/g, " ").trim();
+  let desc = "", em = t.match(/\s(?:isyerinden|işyerinden|isyerinde|işyerinde|üye işyerinden|uye isyerinden|firmasından|firmasindan|firmasında|firmasinda)\b/i);
+  if (em) desc = clean(after(t.slice(Math.max(0, em.index - 80), em.index)));
+  if (!desc) { em = t.match(/(?:isyeri|işyeri|üye işyeri|uye isyeri|açıklama|aciklama)\s*:\s*([^,.;]{3,50})/i); if (em) desc = clean(em[1]); }
+  if (!desc && !pay) desc = clean(after(t.slice(Math.max(0, main.i - 80), main.i))); // işyeri kelimesi yoksa tutarın hemen önü
+  desc = desc.slice(0, 60).trim();
+  if (!desc || desc.replace(/[^A-Za-zÇĞİÖŞÜçğıöşü]/g, "").length < 3 || /^(kart|biten|sayın|sayin|değerli|degerli)/i.test(desc)) desc = pay ? "Kredi kartı ödemesi" : cash ? "Nakit çekim" : type === "gelir" ? "İade" : "Kart harcaması";
+  return { kind: "txn", type, pay, cash, amount: Math.round(main.v * 100) / 100, fx, date, time, desc, last4, inst, avail: availT ? availT.v : null, text: t };
+}
+export const smsKey = t => { const s = norm(String(t || "")).replace(/[^A-Z0-9]/g, ""); let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return "sms" + (h >>> 0).toString(36) + s.length; };

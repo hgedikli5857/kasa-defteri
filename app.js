@@ -496,6 +496,106 @@ function accountForIds(ids) { if (!ids || !ids.length) return null; const h = S.
 /* --- Gmail otomatik içe aktarma: uygulama açıkken yeni ekstreleri kendisi ekler --- */
 const GAuto = { busy: false, last: 0, need: false };
 const gmailAutoOn = () => ls.get("kd-gmail-auto") === "1";
+/* ---------- banka SMS'leri → işlem ---------- */
+// Yollar: (1) SMS'i paylaş / yapıştır, (2) SMS'leri e-postaya ileten bir uygulama + Gmail otomatik içe aktarma
+const SMS_SUBJ = "KasaSMS";
+function smsSplit(text) { // birden çok SMS: boş satırla ya da yeni bir "… ile biten kart…" başlangıcıyla ayrılır
+  return String(text || "").split(/\n\s*\n+/).flatMap(b => b.split(/\n(?=[^\n]{0,40}\b(?:\d{4}\s*ile biten|Sayın|Sayin|Değerli|Degerli))/)).map(x => x.trim()).filter(x => x.length > 15);
+}
+function smsAccount(p) {
+  if (p.last4) { const a = accountForIds(["KART:" + p.last4]); if (a) return a.id; }
+  const cards = S.accounts.filter(isCredit); if (!p.last4 && cards.length === 1) return cards[0].id;
+  const m = ls.get("kd-sms-acc:" + (p.last4 || "x")); return acc(m) ? m : "";
+}
+function smsItems(texts) {
+  const learned = learnedMap(), seen = new Set();
+  return texts.map(text => {
+    const p = IMP.parseSms(text); if (!p) return { text, bad: true };
+    const key = IMP.smsKey(text), accId = smsAccount(p);
+    if (p.kind === "stmt") return { text, p, key, accId, stmt: true, sel: !!accId };
+    let cat = p.pay ? "" : IMP.guessCategory(p.desc, p.type === "gelir" ? 1 : -1, learned);
+    if (!p.pay && !cat.includes("|")) { const g = IMP.guessSub(p.desc); if (g && subsOf(p.type, cat).includes(g)) cat += "|" + g; }
+    const near = t => Math.abs(diffDays(t.date, p.date)) <= 3 && Math.abs(t.amount - p.amount) < 0.01;
+    const exact = S.txns.some(t => t.smsKey === key) || seen.has(key); seen.add(key);
+    const maybe = !exact && accId && S.txns.some(t => p.pay ? t.type === "transfer" && t.toAccountId === accId && near(t) : t.accountId === accId && t.type === p.type && near(t));
+    return { text, p, key, accId, cat, dup: exact ? "var" : maybe ? "olası" : "", sel: !exact && !maybe && !!accId };
+  });
+}
+async function smsCommit(items, silent) {
+  const ops = [], accUpd = {}, newIds = {}, now = new Date().toISOString();
+  const list = items.filter(x => x.sel && x.accId && acc(x.accId)).sort((x, y) => ((x.p.date || "") + (x.p.time || "")) < ((y.p.date || "") + (y.p.time || "")) ? -1 : 1); // eskiden yeniye
+  for (const it of list) {
+    const a = acc(it.accId), p = it.p;
+    if (p.last4 && !(a.ids || []).includes("KART:" + p.last4) && !accountForIds(["KART:" + p.last4])) { const u = accUpd[a.id] = accUpd[a.id] || { ...a }; u.ids = [...new Set([...(u.ids || []), "KART:" + p.last4])]; }
+    if (it.stmt) { const M = p.meta || {}; if (M.debt != null) { const u = accUpd[a.id] = accUpd[a.id] || { ...a }; Object.assign(u, { stmtDebt: M.debt, stmtDate: TODAY, dueDate: M.dueDate || dueAfter(TODAY, a) }); if (M.minPay != null) u.minPay = M.minPay; else delete u.minPay; } continue; }
+    const id = uid8(), base = { date: p.date, note: p.desc + (p.time ? "" : ""), src: "sms", smsKey: it.key, smsAt: now };
+    let o;
+    if (p.pay && isCredit(a)) { const from = cardPayFrom(a); o = from ? { ...base, type: "transfer", accountId: from, toAccountId: a.id, amount: p.amount, category: "Transfer", note: `${accName(a)} kart ödemesi` } : { ...base, type: "gelir", accountId: a.id, amount: p.amount, category: MOVE_CAT }; }
+    else { const [c, sb = ""] = (it.cat || (p.type === "gelir" ? "Diğer gelir" : "Diğer gider")).split("|"); o = { ...base, type: p.type, accountId: a.id, amount: p.amount, category: c, sub: sb, ...(p.fx ? { fx: { cur: p.fx.cur, amt: p.fx.amt, rate: Math.round(p.amount / p.fx.amt * 10000) / 10000 } } : {}), ...(p.inst > 1 && p.type === "gider" && isCredit(a) ? { inst: p.inst } : {}) }; }
+    ops.push({ type: "set", col: "txns", id, data: o }); (newIds[a.id] = newIds[a.id] || []).push(id);
+    // SMS'teki kullanılabilir limit: kart borcunu bankayla eşitle (bugünkü SMS'lerde)
+    if (p.avail != null && +a.limit > 0 && p.date >= addDays(TODAY, -1)) { const u = accUpd[a.id] = accUpd[a.id] || { ...a }; u._avail = p.avail; u._ids = [...newIds[a.id]]; } // limit bu SMS anındaki durumdur: sonraki SMS'ler eşitlemeden sonra sayılır
+  }
+  for (const [aid, u] of Object.entries(accUpd)) {
+    if (u._avail != null) { Object.assign(u, creditAnchor(aid, +u.limit, u._avail)); u.syncIds = [...new Set([...(u.syncIds || []), ...(u._ids || [])])]; }
+    delete u._avail; delete u._ids; const { id, ...d } = u; ops.push({ type: "set", col: "accounts", id, data: clean(d) });
+  }
+  if (!ops.length) return 0;
+  if (live()) { await batchWrite(ops); Drive.dirty(); }
+  else { ops.forEach(o => { const arr = S[o.col], i = arr.findIndex(x => x.id === o.id); const v = { id: o.id, ...o.data }; if (i >= 0) arr[i] = v; else arr.push(v); }); saveDemo(); render(); }
+  const n = ops.filter(o => o.col === "txns").length; if (!silent) toast(n ? `${n} işlem SMS'ten eklendi` : "Kart bilgileri güncellendi");
+  return n;
+}
+let SMSP = null;
+function smsPanel(text) {
+  if (text != null) SMSP = { text, items: smsItems(smsSplit(text)) };
+  if (!SMSP) SMSP = { text: "", items: [] };
+  const its = SMSP.items, ok = its.filter(x => !x.bad), sel = ok.filter(x => x.sel);
+  const cards = S.accounts, auto = gmailAutoOn() && ls.get("kd-sms-mail") === "1";
+  const row = (x, i) => x.bad ? `<div class="row" style="opacity:.6"><div class="m">Okunamadı (işlem SMS'i değil): ${esc(x.text.slice(0, 80))}…</div></div>` :
+    `<div class="row" style="grid-template-columns:auto minmax(0,1fr) auto;opacity:${x.sel ? 1 : .6}"><input type="checkbox" class="sms-sel" data-i="${i}" ${x.sel ? "checked" : ""} style="width:auto">
+      <div style="min-width:0"><div class="t" style="font-size:.9rem">${x.stmt ? "📄 Ekstre bilgisi" : esc(x.p.desc)}</div>
+        <div class="m">${x.stmt ? `borç ${money(x.p.meta?.debt || 0)}${x.p.meta?.minPay != null ? " · asgari " + money(x.p.meta.minPay) : ""}${x.p.meta?.dueDate ? " · son ödeme " + dshort(x.p.meta.dueDate) : ""}` : `${dshort(x.p.date)}${x.p.time ? " " + x.p.time : ""}${x.p.last4 ? " · kart •" + x.p.last4 : ""}${x.p.pay ? " · kart ödemesi (transfer)" : ""}${x.p.inst ? ` · ${x.p.inst} taksit` : ""}${x.p.fx ? ` · ${esc(fmtAsset(x.p.fx.amt, x.p.fx.cur))}` : ""}${x.p.avail != null ? ` · kalan limit ${money0(x.p.avail)}` : ""}`}${x.dup ? ` · <span style="color:var(--warn)">${x.dup === "var" ? "zaten eklendi" : "olası tekrar"}</span>` : ""}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px"><select class="sms-acc" data-i="${i}" style="padding:4px 6px;font-size:.82rem;width:auto;max-width:100%"><option value="">Hesap seç…</option>${cards.map(a => `<option value="${esc(a.id)}" ${a.id === x.accId ? "selected" : ""}>${esc(accName(a))}</option>`).join("")}</select>
+        ${!x.stmt && !x.p.pay ? `<select class="sms-cat" data-i="${i}" style="padding:4px 6px;font-size:.82rem;width:auto;max-width:100%">${impCatOptions(x.p.type, x.cat)}</select>` : ""}</div></div>
+      <div class="amt ${x.stmt ? "" : x.p.type === "gelir" ? "pos" : "neg"}" style="font-size:.92rem">${x.stmt ? "" : (x.p.type === "gelir" ? "+" : "−") + money(x.p.amount)}</div></div>`;
+  const body = `<div class="form" id="smsPanel">
+    <p class="small-note" style="margin:0">Bankadan gelen kart SMS'lerini buraya yapıştır (birden çok olabilir) ya da mesajlar uygulamasında SMS'e uzun bas → <b>Paylaş → Kasa Defteri</b>. Tutar, işyeri, tarih ve kart (son 4 hane) okunur; kalan limit yazıyorsa kart borcu da eşitlenir.</p>
+    <textarea id="sms-text" rows="4" placeholder="4311 ile biten kartınızla 03.11.2026 15:20 tarihinde MIGROS işyerinden 249,89 TL harcama yapılmıştır…">${esc(SMSP.text || "")}</textarea>
+    <button type="button" class="btn" data-act="sms-read">SMS'leri oku</button>
+    ${its.length ? `<div class="list" style="max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:0 8px">${its.map(row).join("")}</div>` : ""}
+    ${ok.some(x => !x.accId) ? `<p class="small-note" style="margin:0;color:var(--warn)">Kartı tanınmayan SMS'ler için hesap seç; seçtiğin hesap o kartın son 4 hanesini öğrenir, sonrakiler otomatik gider.</p>` : ""}
+    <details ${auto ? "" : "open"}><summary style="cursor:pointer;font-weight:600">${auto ? "✓ Otomatik SMS aktarımı açık" : "SMS'leri otomatik aktar (kurulum)"}</summary>
+      <div class="small-note" style="display:grid;gap:6px;margin-top:6px">
+        <span>Web uygulamaları SMS okuyamaz; bu yüzden telefonundaki bir otomasyon uygulaması SMS'i <b>kendi Gmail adresine</b> iletir, Kasa Defteri de Gmail'den okur.</span>
+        <span><b>1.</b> Play Store'dan <b>MacroDroid</b>'i kur (ücretsiz). Yeni makro → Tetikleyici: <b>SMS alındı</b> → Gönderen: <b>KUVEYT TURK</b> (ya da "içerik içerir: biten kart").</span>
+        <span><b>2.</b> Eylem: <b>E-posta gönder</b> → Alıcı: kendi Gmail adresin · Konu: <b>${SMS_SUBJ}</b> · İçerik: <b>[sms_message]</b>. Gönderim hesabı olarak Gmail'ini bağla.</span>
+        <span><b>3.</b> Aşağıdaki kutuyu aç. Uygulama açıkken her 15 dakikada (ve her açılışta) "${SMS_SUBJ}" konulu e-postaları okuyup işlemleri ekler.</span>
+        <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="sms-auto" style="width:auto" ${auto ? "checked" : ""}> Gmail'deki "${SMS_SUBJ}" e-postalarından otomatik ekle</label>
+        ${ls.get("kd-sms-last") ? `<span>Son otomatik okuma: ${esc(tfmt.format(new Date(ls.get("kd-sms-last"))))}</span>` : ""}</div></details>
+    <div class="foot"><span></span><div class="r"><button type="button" class="btn" data-close>Kapat</button><button type="button" class="btn primary" data-act="sms-commit" ${sel.length ? "" : "disabled"}>${sel.length} kaydı ekle</button></div></div></div>`;
+  if ($("#smsPanel")) $("#smsPanel").outerHTML = body; else openSheet("📩 SMS'ten işlem ekle", body);
+}
+// Gmail'deki SMS e-postaları (MacroDroid vb. ile iletilen)
+function mailText(p) {
+  if (!p) return ""; if (p.mimeType === "text/plain" && p.body && p.body.data) return b64u(p.body.data, true);
+  for (const x of p.parts || []) { const t = mailText(x); if (t) return t; }
+  if (p.mimeType === "text/html" && p.body && p.body.data) return b64u(p.body.data, true).replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ");
+  return "";
+}
+async function smsFromGmail() {
+  if (ls.get("kd-sms-mail") !== "1") return { n: 0 };
+  const done = gmailDone(), r = await Gmail.api("messages?maxResults=30&q=" + encodeURIComponent(`subject:${SMS_SUBJ} newer_than:14d`));
+  const texts = [], keys = [];
+  for (const m0 of r.messages || []) {
+    const k = "sms|" + m0.id; if (done[k]) continue;
+    const m = await Gmail.api("messages/" + m0.id + "?format=full"); texts.push(...smsSplit(mailText(m.payload) || m.snippet || "")); keys.push(k);
+  }
+  let n = 0, miss = 0;
+  if (texts.length) { const its = smsItems(texts).filter(x => !x.bad); miss = its.filter(x => !x.accId && !x.dup).length; n = await smsCommit(its, true); }
+  keys.forEach(k => { done[k] = Date.now(); }); ls.set("kd-gmail-done", JSON.stringify(done)); ls.set("kd-sms-last", new Date().toISOString());
+  return { n, miss };
+}
 async function gmailAutoImport(force) {
   if (!live() || !gmailAutoOn() || GAuto.busy || !navigator.onLine) return;
   Gmail.load(); if (!Gmail.valid()) { if (!GAuto.need) { GAuto.need = true; renderChips(); } return; }
@@ -528,10 +628,11 @@ async function gmailAutoImport(force) {
       }
     }
     ls.set("kd-gmail-auto-at", new Date().toISOString());
+    try { const r2 = await smsFromGmail(); if (r2.n) report.push({ sms: r2.n }); if (r2.miss) report.push({ err: `${r2.miss} SMS'in kartı tanınmadı, SMS ekranından hesap seç` }); } catch (e) { if (e.status === 401) throw e; }
   } catch (e) { if (e.status === 401) GAuto.need = true; }
   GAuto.busy = false; renderChips();
-  const add = report.filter(x => x.n), bad = report.filter(x => x.err);
-  if (add.length) toast("Gmail'den eklendi: " + add.map(x => `${accName(acc(x.accId))} ${x.n} hareket`).join(" · "));
+  const add = report.filter(x => x.n), bad = report.filter(x => x.err), sm = report.filter(x => x.sms);
+  if (add.length || sm.length) toast("Gmail'den eklendi: " + [...add.map(x => `${accName(acc(x.accId))} ${x.n} hareket`), ...sm.map(x => `${x.sms} kart işlemi (SMS)`)].join(" · "));
   else if (bad.length) toast("Gmail: " + bad.map(x => `${x.accId ? accName(acc(x.accId)) + " – " : ""}${x.err}`).join(" · "));
 }
 async function gmailOpen(msgId, attId, name) {
@@ -660,6 +761,8 @@ function renderLogin(err) {
 const EYE_ON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>`;
 const EYE_OFF = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 19c-7 0-11-7-11-7a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 7 11 7a18.5 18.5 0 0 1-2.16 3.19"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
 let HIDING = false;
+// paylaşılan SMS (Android: SMS'e uzun bas → Paylaş → Kasa Defteri) ya da kısayol
+let PENDING_SMS = (() => { const q = new URLSearchParams(location.search), t = [q.get("smst"), q.get("sms"), q.get("smsu")].filter(Boolean).join("\n").trim(); return t || (q.get("act") === "sms" ? "" : null); })();
 function render() {
   const pb = $("#privBtn"); if (pb) { pb.innerHTML = ui.priv ? EYE_OFF : EYE_ON; pb.setAttribute("aria-pressed", String(!!ui.priv)); pb.title = ui.priv ? "Verileri göster" : "Verileri gizle"; pb.setAttribute("aria-label", pb.title); }
   if (!ui.priv) return render0();
@@ -680,6 +783,7 @@ function render0() {
   v.innerHTML = ({ ozet: viewOzet, islemler: viewIslemler, giderler: viewGiderler, vadeler: viewVadeler, hesaplar: viewHesaplar, cariler: viewCariler, raporlar: viewRaporlar }[ui.tab] || viewOzet)();
   const qi = $("#fq"); if (qi && ui._focusQ) { qi.focus(); qi.setSelectionRange(qi.value.length, qi.value.length); ui._focusQ = false; }
   if (live()) { clearTimeout(render._rt); render._rt = setTimeout(syncReminders, 3000); }
+  if (PENDING_SMS != null && (mode === "live" || mode === "demo")) { const t = PENDING_SMS; PENDING_SMS = null; try { history.replaceState(null, "", location.pathname); } catch (e) { } setTimeout(() => smsPanel(t), 300); }
   const aq = $("#accq"); if (aq && ui._focusAq) { aq.focus(); aq.setSelectionRange(aq.value.length, aq.value.length); ui._focusAq = false; }
 }
 function renderNotice() {
@@ -819,7 +923,7 @@ function viewIslemler() {
       <div class="amt ${sg > 0 ? "pos" : sg < 0 ? "neg" : "muted"}">${sg > 0 ? "+" : sg < 0 ? "−" : "⇄ "}${fmtAsset(t.amount, txAsset(t))}${t.type === "transfer" && t.toAmount != null && accAsset(acc(t.toAccountId)) !== txAsset(t) ? `<div class="muted" style="font-size:.78rem">→ ${fmtAsset(t.toAmount, accAsset(acc(t.toAccountId)))}</div>` : txAsset(t) !== "TRY" && t.type !== "transfer" ? `<div class="muted" style="font-size:.78rem">≈ ${money(txTRY(t))}</div>` : ""}</div></div>`;
   }
   return `<section class="panel"><div class="ph"><div><h2>İşlemler</h2><p>${rows.length} kayıt · <span class="pos">${money(inc)}</span> gelir · <span class="neg">${money(exp)}</span> gider</p></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="import-stmt">⇣ Ekstre içe aktar</button>${S.txns.some(t => t.importKey) ? `<button class="btn" data-act="imports">Yüklenen ekstreler</button>` : ""}<button class="btn primary" data-act="new-txn">+ İşlem</button></div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="import-stmt">⇣ Ekstre içe aktar</button><button class="btn" data-act="sms">📩 SMS</button>${S.txns.some(t => t.importKey) ? `<button class="btn" data-act="imports">Yüklenen ekstreler</button>` : ""}<button class="btn primary" data-act="new-txn">+ İşlem</button></div></div>
     ${otherTxs().length >= 3 ? `<div class="notice warn" style="margin:0 0 10px"><span><b>${otherTxs().length} işlem "Diğer" kategorisinde.</b> Ekstre açıklamalarından kategorileri yeniden tahmin edebilirim.</span><button class="btn small primary" data-act="recat">Otomatik kategorilendir</button></div>` : ""}
     <div class="filters"><input id="fq" type="search" placeholder="Ara: kategori, cari, not, tutar" value="${esc(ui.q)}" aria-label="İşlemlerde ara">
     <select id="ftype" aria-label="Tür"><option value="">Tüm türler</option>${["gelir", "gider", "transfer"].map(x => `<option value="${x}" ${ui.ftype === x ? "selected" : ""}>${x[0].toLocaleUpperCase("tr") + x.slice(1)}</option>`).join("")}</select>
@@ -1345,7 +1449,7 @@ function completeForm(p) {
     <div class="foot"><span></span><div class="r"><button type="button" class="btn" data-close>Vazgeç</button><button class="btn primary" type="submit">Kaydet</button></div></div></form>`);
 }
 function newMenu() {
-  openSheet("Ne eklemek istiyorsun?", `<div class="form" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">${[["new-gelir", "Gelir", "Satış, hizmet, faiz"], ["new-gider", "Gider", "Kira, fatura, maaş"], ["new-transfer", "Transfer", "Hesaplar arası para aktarımı"], ["new-plan", "Vade", "Yaklaşan ödeme veya tahsilat"], ["new-contact", "Cari", "Müşteri veya tedarikçi"], ["new-account", "Hesap", "Banka, kredi kartı, yatırım"], ["new-cash", "Nakit", "Cüzdan, kasa, evdeki döviz/altın"], ["import-stmt", "Ekstre", "Bankadan indirilen Excel/CSV"]].map(([a, t, s]) => `<button class="acard" data-act="${a}" type="button"><b>${t}</b><span class="muted" style="font-size:.84rem">${s}</span></button>`).join("")}</div>`);
+  openSheet("Ne eklemek istiyorsun?", `<div class="form" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">${[["new-gelir", "Gelir", "Satış, hizmet, faiz"], ["new-gider", "Gider", "Kira, fatura, maaş"], ["new-transfer", "Transfer", "Hesaplar arası para aktarımı"], ["new-plan", "Vade", "Yaklaşan ödeme veya tahsilat"], ["new-contact", "Cari", "Müşteri veya tedarikçi"], ["new-account", "Hesap", "Banka, kredi kartı, yatırım"], ["new-cash", "Nakit", "Cüzdan, kasa, evdeki döviz/altın"], ["import-stmt", "Ekstre", "Bankadan indirilen Excel/CSV"], ["sms", "SMS", "Bankanın kart SMS'lerinden"]].map(([a, t, s]) => `<button class="acard" data-act="${a}" type="button"><b>${t}</b><span class="muted" style="font-size:.84rem">${s}</span></button>`).join("")}</div>`);
 }
 /* --- harcama analizi (Özet) --- */
 // renk ölçeği: en yüksek pay kırmızı, sonra turuncu, amber; küçük kalemler nötr
@@ -2187,7 +2291,7 @@ function buildImpItems() {
     if (ct && /^Diğer/.test(cat) && byContact[ct.id + "|" + type]) cat = byContact[ct.id + "|" + type];
     if (!cat.includes("|")) { const sg = IMP.guessSub(x.desc); if (sg && subsOf(type, cat).includes(sg)) cat += "|" + sg; }
     // elle girilmiş (ekstresiz) kayıt: aynı gün, yakın tutar → ekstredeki kayıt onun yerine geçer (çift sayılmaz, açıklama ve doğru tutar gelir)
-    const man = !exact ? S.txns.find(t => t.accountId === acNow && !t.importKey && t.type === type && t.date === x.date && !usedMan.has(t.id) && Math.abs(t.amount - amt) <= Math.max(5, amt * 0.15)) : null;
+    const man = !exact ? S.txns.find(t => t.accountId === acNow && !t.importKey && t.type === type && !usedMan.has(t.id) && (t.date === x.date && Math.abs(t.amount - amt) <= Math.max(5, amt * 0.15) || t.src === "sms" && Math.abs(diffDays(t.date, x.date)) <= 3 && Math.abs(t.amount - amt) < 0.01)) : null; // elle ya da SMS'ten girilmiş
     const mc = man && man.category && !/^Diğer/.test(man.category) ? man.category : "", gc = /^Diğer/.test(cat) ? "" : cat.split("|")[0];
     if (man && mc && gc && mc !== gc && !(man.note || "").trim()) { // kategori çelişiyor: otomatik değiştirme, kullanıcı karar versin
       usedMan.add(man.id); return { ...x, key, type, amt, dup: "elle?", sel: false, manAmt: man.amount, manCat: mc, cat, contactId: ct ? ct.id : "" };
@@ -2570,6 +2674,9 @@ document.addEventListener("click", async e => {
   if (a === "bill-new") return billForm();
   if (a === "notif") return enableNotifications();
   if (a === "notif-test") return testNotification();
+  if (a === "sms") return smsPanel(SMSP && SMSP.items.some(x => !x.bad && x.sel) ? undefined : "");
+  if (a === "sms-read") return smsPanel($("#sms-text").value);
+  if (a === "sms-commit") { el.disabled = true; const n = await smsCommit(SMSP.items); SMSP = null; closeSheet(); return; }
   if (a === "push-key") return pushKeyForm();
   if (a === "an-sel") return scopePicker();
   if (a === "an-sel-apply") { const ids = [...document.querySelectorAll(".sc-sel:checked")].map(i => i.value); if (!ids.length) { toast("En az bir hesap seç."); return; } ui.anSel = ids; ls.set("kd-ansel", JSON.stringify(ids)); setScope("sel"); closeSheet(); return render(); }
@@ -2640,6 +2747,15 @@ document.addEventListener("change", async e => {
     if (live()) { if (!(await safe(() => batchWrite(ops)))) return; Drive.dirty(); }
     else { list.forEach(t => { t.category = c; t.sub = sb; }); saveDemo(); render(); }
     toast(`${list.length} kayıt "${c}${sb ? " › " + sb : ""}" yapıldı`); return;
+  }
+  if (e.target.closest && e.target.closest("#smsPanel")) {
+    const t = e.target, i = +t.dataset.i, x = SMSP && SMSP.items[i];
+    if (t.id === "sms-auto") { ls.set("kd-sms-mail", t.checked ? "1" : "0"); if (t.checked) { ls.set("kd-gmail-auto", "1"); Gmail.load(); if (!Gmail.valid()) { if (await Gmail.authorize()) { GAuto.need = false; } } setTimeout(() => gmailAutoImport(true), 500); } renderChips(); toast(t.checked ? "SMS e-postaları otomatik eklenecek" : "Otomatik SMS aktarımı kapalı"); return; }
+    if (!x) return;
+    if (t.classList.contains("sms-sel")) { x.sel = t.checked && !!x.accId; if (t.checked && !x.accId) toast("Önce hesap seç."); }
+    else if (t.classList.contains("sms-acc")) { x.accId = t.value; if (x.p && t.value) ls.set("kd-sms-acc:" + (x.p.last4 || "x"), t.value); SMSP.items.forEach(y => { if (y !== x && !y.bad && y.p.last4 && y.p.last4 === x.p.last4 && !y.accId) y.accId = t.value; }); x.sel = !!t.value && x.dup !== "var"; }
+    else if (t.classList.contains("sms-cat")) x.cat = t.value;
+    return smsPanel();
   }
   if (e.target.id === "an-scope") { if (e.target.value === "sel") return scopePicker(); setScope(e.target.value); return render(); }
   if (e.target.id === "ftype") { ui.ftype = e.target.value; render(); }
