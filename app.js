@@ -1775,7 +1775,7 @@ function viewGiderler() {
         <div class="m">Son ödeme ${dshort(r.due)}${r.pay ? ` · ödendi ${dshort(r.pay.t.date)}${a ? " · " + esc(accName(a)) : ""}` : a ? " · " + esc(accName(a)) : ""}</div></div></div>
       <div style="text-align:right;display:grid;gap:4px;justify-items:end">
         <div class="amt ${r.st === "late" ? "neg" : ""}">${r.pay ? money(r.pay.t.amount) : r.exp ? `<span class="muted" style="font-weight:400;font-size:.8rem">≈</span> ${money(r.exp)}` : `<span class="muted">tutar ?</span>`}</div>
-        ${r.pay ? (r.pay.auto ? "" : `<button class="btn small ghost" data-edit-txn="${esc(r.pay.t.id)}" style="padding:2px 6px">Ödemeyi aç</button>`) : `<button class="btn small primary" data-bill-pay="${esc(b.id)}|${m}">Öde</button>`}</div></div>`; };
+        <span style="display:flex;gap:4px;flex-wrap:wrap;justify-content:end">${r.pay ? `<button class="btn small ghost" data-edit-txn="${esc(r.pay.t.id)}" style="padding:2px 6px">Ödemeyi aç</button>` : `<button class="btn small primary" data-bill-pay="${esc(b.id)}|${m}">Öde</button>`}<button class="btn small" data-bill-edit="${esc(b.id)}" aria-label="Düzenle / sil" title="Düzenle / sil">✎</button></span></div></div>`; };
   return `<section class="panel"><div class="ph"><div><h2>Sabit giderler</h2><p>Faturalar ve her ay tekrar eden ödemeler</p></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="notif">${nperm === "granted" ? "🔔 Bildirimler açık" : "🔔 Bildirimleri aç"}</button><button class="btn primary" data-act="bill-new">+ Gider ekle</button></div></div>
     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:4px 0 12px">
@@ -1797,7 +1797,7 @@ function viewGiderler() {
           <div style="text-align:right;display:grid;gap:4px;justify-items:end"><div class="amt ${D && !done && D.left < 0 ? "neg" : ""}">${D && !D.est ? money(done ? D.debt : D.rest) : `<span class="muted" style="font-weight:400;font-size:.8rem">borç</span> ${money(used)}`}</div>
           ${used >= 0.01 ? `<button class="btn small primary" data-card-pay="${esc(c.id)}">Öde</button>` : ""}</div></div>`; }).join("")}</div>`; })()}
     ${BILL_PRESETS.some(p => !used.has(p[0])) ? `<div style="margin-top:14px"><div class="dhead" style="padding-left:0"><span>Hızlı ekle</span></div><div style="display:flex;gap:8px;flex-wrap:wrap">${BILL_PRESETS.filter(p => !used.has(p[0])).map(p => `<button class="btn small" data-bill-preset="${esc(p[0])}">${billIcon(p[0])} ${esc(p[0])}</button>`).join("")}</div></div>` : ""}
-    <p class="small-note" style="margin-top:12px">Ekstreden gelen ödemeler (ör. "Başkent Gaz Doğalgaz") otomatik "Ödendi" sayılır. Elle ödediğinde <b>Öde</b>'ye bas. ${nperm === "granted" ? "Son ödeme gününden önce bildirim gelir." : "Hatırlatma için bildirimleri aç ya da gideri düzenleyip <b>Google Takvim'e ekle</b>."}</p></section>`;
+    <p class="small-note" style="margin-top:12px">Ekstreden gelen ödemeler (ör. "Başkent Gaz Doğalgaz") otomatik "Ödendi" sayılır. Elle ödediğinde <b>Öde</b>'ye bas. Gideri düzenlemek ya da silmek için <b>✎</b>'ye bas. ${nperm === "granted" ? "Son ödeme gününden önce bildirim gelir." : "Hatırlatma için bildirimleri aç ya da gideri düzenleyip <b>Google Takvim'e ekle</b>."}</p></section>`;
 }
 function billForm(b, preset) {
   const P = preset ? BILL_PRESETS.find(x => x[0] === preset) : null;
@@ -2633,7 +2633,7 @@ window.addEventListener("offline", renderChips);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && iso(new Date()) !== TODAY) render(); });
 
 document.addEventListener("click", async e => {
-  const el = e.target.closest("button,[data-edit-txn],[data-edit-plan],[data-edit-account],[data-open-account],[data-an-scope],[data-rep-scope],[data-show-contact],[data-batch],.overlay");
+  const el = e.target.closest("button,[data-edit-txn],[data-edit-plan],[data-edit-account],[data-open-account],[data-an-scope],[data-rep-scope],[data-show-contact],[data-batch],[data-bill-edit],.overlay");
   if (!el) return;
   if (el.id === "ov" && e.target === el) return closeSheet();
   const d = el.dataset;
