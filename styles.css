@@ -153,18 +153,33 @@ button.chip:hover{border-color:var(--muted)}
 .acc-chip img{width:18px;height:18px;border-radius:50%}
 .small-note{font-size:.8rem;color:var(--muted)}
 
-/* telefon: alt gezinme çubuğu ve sığan rakamlar */
-@media (max-width:640px){
-  .kpi .val{font-size:1.08rem}
-  .tabs{position:fixed;left:0;right:0;bottom:0;z-index:30;background:var(--surface);border-top:1px solid var(--line);margin:0;padding:0 4px env(safe-area-inset-bottom,0px);overflow:visible}
-  .tab{flex:1 1 0;min-width:0;padding:12px 2px 10px;font-size:.78rem;border-bottom:0;border-top:2px solid transparent;position:relative;overflow:hidden;text-overflow:ellipsis}
-  .tab[aria-selected="true"]{border-top-color:var(--accent);color:var(--accent);font-weight:600}
-  .tab .cnt{position:absolute;top:3px;right:4px;margin:0;font-size:.62rem;padding:0 5px}
-  main{padding-bottom:calc(90px + env(safe-area-inset-bottom,0px))}
-  .toast{bottom:calc(76px + env(safe-area-inset-bottom,0px))}
-  .brand{padding-block:10px 10px}
-  .brand h1{font-size:1.25rem}
-}
+/* mobil görünüm (telefonda otomatik; tablette/bilgisayarda "Mobil görünüm" ile): tek sütun, alt gezinme çubuğu, + düğmesi */
+html.mobile .wrap{max-width:600px}
+html.mobile .g-kpi{grid-template-columns:repeat(2,minmax(0,1fr))}
+html.mobile .g-2{grid-template-columns:minmax(0,1fr)}
+html.mobile .kpi .val{font-size:1.08rem}
+html.mobile .brand{padding-block:10px 8px;gap:8px}
+html.mobile .brand > div:first-child{width:100%;flex-wrap:nowrap!important;gap:10px!important}
+html.mobile .brand h1{font-size:1.2rem;flex:none}
+html.mobile .chips{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;min-width:0}
+html.mobile .chips::-webkit-scrollbar{display:none}
+html.mobile .netpos{width:100%;justify-content:space-between;align-items:center}
+html.mobile .netpos b{font-size:1.25rem;margin-right:auto}
+html.mobile #addBtn{position:fixed;right:max(16px,calc(50% - 284px));bottom:calc(76px + env(safe-area-inset-bottom,0px));z-index:31;width:56px;height:56px;border-radius:50%;padding:0;justify-content:center;font-size:0;box-shadow:0 6px 18px rgba(0,0,0,.25)}
+html.mobile #addBtn::before{content:"+";font:500 30px/1 var(--f-body)}
+html.mobile .tabs{position:fixed;left:0;right:0;bottom:0;z-index:30;background:var(--surface);border-top:1px solid var(--line);margin:0 auto;max-width:600px;padding:0 2px env(safe-area-inset-bottom,0px);overflow:visible}
+html.mobile .tab{flex:1 1 0;min-width:0;padding:7px 1px 6px;font-size:.66rem;border-bottom:0;border-top:2px solid transparent;position:relative;display:flex;flex-direction:column;align-items:center;gap:1px;line-height:1.15}
+html.mobile .tab .ti{display:block;font-size:1.15rem;line-height:1.2}
+html.mobile .tab[aria-selected="true"]{border-top-color:var(--accent);color:var(--accent);font-weight:600}
+html.mobile .tab .cnt{position:absolute;top:2px;left:calc(50% + 6px);margin:0;font-size:.6rem;padding:0 5px}
+html.mobile main{padding-bottom:calc(150px + env(safe-area-inset-bottom,0px))}
+html.mobile .toast{bottom:calc(140px + env(safe-area-inset-bottom,0px))}
+html.mobile .overlay{align-items:flex-end}
+html.mobile .sheet{border-radius:14px 14px 0 0;width:min(600px,100%)}
+html.mobile .f2{grid-template-columns:1fr}
+html.mobile .ph{flex-wrap:wrap}
+html.mobile .cards{grid-template-columns:minmax(0,1fr)}
+.tab .ti{display:none}
 
 .csum{display:grid;gap:8px}
 .csum-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}

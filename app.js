@@ -744,6 +744,14 @@ const Drive = {
 
 /* ---------- render ---------- */
 const TABS = [["ozet", "Özet"], ["islemler", "İşlemler"], ["giderler", "Giderler"], ["vadeler", "Vadeler"], ["hesaplar", "Hesaplar"], ["cariler", "Cariler"], ["raporlar", "Raporlar"]];
+const TAB_ICON = { ozet: "🏠", islemler: "↕️", giderler: "🧾", vadeler: "⏰", hesaplar: "🏦", cariler: "👥", raporlar: "📊" };
+// mobil görünüm: telefonda (≤640 px) ya da dokunmatik tablette otomatik; elle açılıp kapatılabilir (kd-mobile: "1" açık, "0" kapalı)
+function applyMobile() {
+  const pref = ls.get("kd-mobile"), auto = innerWidth <= 640 || (matchMedia("(pointer:coarse)").matches && innerWidth <= 1400);
+  document.documentElement.classList.toggle("mobile", pref === "1" || (pref !== "0" && auto));
+}
+const isMobileView = () => document.documentElement.classList.contains("mobile");
+applyMobile(); addEventListener("resize", applyMobile);
 function showApp() { $("#loginRoot").hidden = true; $("#appRoot").hidden = false; render(); }
 const GLOGO = `<svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.3 0-9.7-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>`;
 function renderLogin(err) {
@@ -773,7 +781,7 @@ function render0() {
   if ($("#appRoot").hidden) return;
   TODAY = iso(new Date());
   const overdue = pending().filter(p => p.due < TODAY).length;
-  $("#tabs").innerHTML = TABS.map(([k, l]) => `<button class="tab" role="tab" aria-selected="${ui.tab === k}" data-tab="${k}">${l}${k === "vadeler" && overdue ? `<span class="cnt">${overdue}</span>` : ""}${k === "giderler" && billLateN() ? `<span class="cnt">${billLateN()}</span>` : ""}</button>`).join("");
+  $("#tabs").innerHTML = TABS.map(([k, l]) => `<button class="tab" role="tab" aria-selected="${ui.tab === k}" data-tab="${k}"><span class="ti" aria-hidden="true">${TAB_ICON[k]}</span>${l}${k === "vadeler" && overdue ? `<span class="cnt">${overdue}</span>` : ""}${k === "giderler" && billLateN() ? `<span class="cnt">${billLateN()}</span>` : ""}</button>`).join("");
   const np = totalCash() + recv() - pay();
   const npEl = $("#netpos"); npEl.textContent = mode === "loading" ? "—" : money(np); npEl.className = "num " + (np < 0 ? "neg" : "");
   renderNotice(); renderChips();
@@ -2115,13 +2123,13 @@ async function resetTxns() {
 function accountPanel() {
   if (mode === "demo") {
     openSheet("Deneme modu", `<div class="form"><p style="margin:0">Firebase ayarları yapılmadığı için kayıtlar yalnızca bu cihazda tutuluyor. <b>firebase-config.js</b> dosyasını doldurduğunda Google ile giriş, anlık senkron ve Drive yedeği açılır.</p>
-      <div class="foot" style="justify-content:flex-start"><button class="btn" data-act="export-json">Yedek dosyası indir</button><button class="btn" data-act="import">Yedek dosyasından yükle</button><button class="btn" data-act="reset">İşlemleri sıfırla</button></div></div>`);
+      <div class="foot" style="justify-content:flex-start"><button class="btn" data-act="export-json">Yedek dosyası indir</button><button class="btn" data-act="import">Yedek dosyasından yükle</button><button class="btn" data-act="reset">İşlemleri sıfırla</button><button class="btn" data-act="mobile-toggle">📱 Mobil görünüm: ${isMobileView() ? "açık" : "kapalı"}</button></div></div>`);
     return;
   }
   openSheet("Hesabım", `<div class="form">
     <div style="display:flex;gap:12px;align-items:center">${user.photoURL ? `<img src="${esc(user.photoURL)}" alt="" width="44" height="44" style="border-radius:50%" referrerpolicy="no-referrer">` : ""}<div><b>${esc(user.displayName || "")}</b><div class="muted" style="font-size:.88rem">${esc(user.email || "")}</div></div></div>
     <p class="muted" style="margin:0;font-size:.88rem">Bu Google hesabıyla girdiğin tüm cihazlarda aynı kayıtları görürsün.</p>
-    <div class="foot" style="justify-content:flex-start;flex-wrap:wrap"><button class="btn" data-act="export-json">Yedek dosyası indir</button><button class="btn" data-act="import">Yedek dosyasından yükle</button><button class="btn" data-act="reset">İşlemleri sıfırla</button><button class="btn" data-act="cats">Kategoriler</button><button class="btn" data-act="rates">Kurlar</button></div>
+    <div class="foot" style="justify-content:flex-start;flex-wrap:wrap"><button class="btn" data-act="export-json">Yedek dosyası indir</button><button class="btn" data-act="import">Yedek dosyasından yükle</button><button class="btn" data-act="reset">İşlemleri sıfırla</button><button class="btn" data-act="mobile-toggle">📱 Mobil görünüm: ${isMobileView() ? "açık" : "kapalı"}</button><button class="btn" data-act="cats">Kategoriler</button><button class="btn" data-act="rates">Kurlar</button></div>
     <div class="foot"><span></span><div class="r"><button class="btn danger" data-act="signout">Çıkış yap</button></div></div></div>`);
 }
 function ratesPanel() {
@@ -2709,6 +2717,7 @@ document.addEventListener("click", async e => {
   if (a === "bill-new") return billForm();
   if (a === "notif") return enableNotifications();
   if (a === "notif-test") return testNotification();
+  if (a === "mobile-toggle") { ls.set("kd-mobile", isMobileView() ? "0" : "1"); applyMobile(); closeSheet(); render(); toast(isMobileView() ? "Mobil görünüm açık" : "Mobil görünüm kapalı"); return; }
   if (a === "reset") { if (!S.accounts.length) { toast("Sıfırlanacak hesap yok."); return; } return resetForm(); }
   if (a === "reset-go") { el.disabled = true; await resetTxns(); el.disabled = false; return; }
   if (a === "sms") return smsPanel(SMSP && SMSP.items.some(x => !x.bad && x.sel) ? undefined : "");

@@ -124,6 +124,9 @@ Banka hareketlerini tek tek yazmak yerine:
 ## Ekstre görseli (ekran görüntüsü) okuma
 Görsel önce büyütülüp kontrastı açılır, karanlık tema otomatik çevrilir. OCR'ın rakam hataları (O→0, l→1, "1.250.00"→"1.250,00", ₺'nin H/t okunması) düzeltilir. İşaretsiz tutarlarda işaret yazının renginden (kırmızı = çıkan, yeşil = giren) ya da aynı görseldeki "+" tutarlardan anlaşılır. **📷 Fotoğraf çek** ile bilgisayar ekranından ya da kâğıt ekstreden doğrudan fotoğraf da alınır: eğiklik otomatik düzeltilir, parlama/gölge dengelenir; az satır okunursa görsel güçlü ön işlemeyle ikinci kez okunur. Önizlemede tutarlar düzenlenebilir: yanlış okunanı üstüne dokunup düzelt; **Görseli göster** ile karşılaştır.
 
+## Mobil görünüm
+Telefonda ve dokunmatik tablette otomatik açılır: tek sütun, alttaki simgeli sekme çubuğu, sağ altta yuvarlak **+** (yeni kayıt) düğmesi, aşağıdan açılan pencereler. Sağ üstteki hesabım menüsünden **📱 Mobil görünüm** ile elle açılıp kapatılır (seçim cihazda hatırlanır).
+
 ## İşlemleri sıfırla (hesaplar kalır)
 **Hesaplar → ↺ Sıfırla** (ya da sağ üstteki hesabım → İşlemleri sıfırla). Tüm işlemler silinir; hesaplar, kartlar, limitler ve ayarlar kalır. Her hesabın başlangıç bakiyesi seçilir (bugünkü bakiyeler ya da hepsi 0, tek tek düzeltilebilir); kart ekstre/limit eşitlemeleri temizlenir. İstenirse vadeler ve cariler de silinir. Onay için **SIFIRLA** yazılır ve silmeden önce otomatik yedek dosyası indirilir. Sonra yüklenen ekstrelerde/SMS'lerde başlangıç tarihinden önceki hareketler (zaten bakiyede olduğu için) seçili gelmez.
 
