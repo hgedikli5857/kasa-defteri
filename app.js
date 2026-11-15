@@ -2087,9 +2087,9 @@ function resetForm() {
     return `<div class="row" style="grid-template-columns:minmax(0,1fr) 150px;align-items:center"><div style="min-width:0"><div class="t" style="font-size:.9rem">${esc(accName(a))}</div><div class="m">şu an ${esc(fmtAsset(b, code))}${isCredit(a) ? " · kart borcu eksi yazılır" : ""}</div></div>
       <input class="rs-bal num" data-id="${esc(a.id)}" inputmode="decimal" value="${amtStr(Math.round(b * 100) / 100) || "0"}" aria-label="${esc(accName(a))} başlangıç bakiyesi" style="text-align:right"></div>`; }).join("");
   openSheet("İşlemleri sıfırla", `<div class="form" id="resetPanel">
-    <div class="notice warn" style="margin:0;display:block"><b>${S.txns.length} işlem kalıcı olarak silinecek.</b> Hesapların, kartların, limitleri ve ayarları kalır. ${S.plans.length || S.contacts.length ? "Vadeler ve cariler aşağıda seçmezsen kalır." : ""} Silmeden önce bilgisayarına/telefonuna otomatik bir <b>yedek dosyası</b> indirilir; istersen sonra "Yedek dosyasından yükle" ile geri dönebilirsin.</div>
+    <div class="notice warn" style="margin:0;display:block">${S.txns.length ? `<b>${S.txns.length} işlem kalıcı olarak silinecek.</b>` : "<b>Silinecek işlem yok;</b> sadece başlangıç bakiyeleri ve kart eşitlemeleri yenilenir."} Hesapların, kartların, limitleri ve ayarları kalır. ${S.plans.length || S.contacts.length ? "Vadeler ve cariler aşağıda seçmezsen kalır." : ""} Silmeden önce bilgisayarına/telefonuna otomatik bir <b>yedek dosyası</b> indirilir; istersen sonra "Yedek dosyasından yükle" ile geri dönebilirsin.</div>
     <div><b>Hesaplar hangi bakiyeyle başlasın?</b>
-      <div class="seg" role="group" style="margin:6px 0"><button type="button" data-rs="keep" aria-pressed="true">Bugünkü bakiyeler</button><button type="button" data-rs="zero" aria-pressed="false">Hepsi 0</button></div>
+      <div class="seg" role="group" style="margin:6px 0;flex-wrap:wrap"><button type="button" data-rs="keep" aria-pressed="true">Bugünkü bakiyeler</button><button type="button" data-rs="cards" aria-pressed="false">Kart borçları 0</button><button type="button" data-rs="zero" aria-pressed="false">Hepsi 0</button></div>
       <p class="small-note" style="margin:0 0 6px">Her hesabın yeni başlangıç bakiyesini buradan düzeltebilirsin (bankadaki gerçek bakiyeyi yazman en doğrusu). Kart ekstre/limit eşitlemeleri de sıfırlanır.</p>
       <div class="list" style="max-height:38vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:0 8px">${rows}</div></div>
     <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="rs-plans" style="width:auto"> Vadeleri de sil (${S.plans.length})</label>
@@ -2107,9 +2107,9 @@ async function resetTxns() {
   if (delCon) S.contacts.forEach(c => ops.push({ type: "delete", col: "contacts", id: c.id }));
   const accs = S.accounts.map(a => { const o = { ...a, opening: Math.round((bal[a.id] ?? 0) * 100) / 100, openingDate: TODAY }; RESET_FIELDS.forEach(k => delete o[k]); return o; });
   accs.forEach(a => { const { id, ...d } = a; ops.push({ type: "set", col: "accounts", id, data: d }); });
-  const n = S.txns.length;
-  if (live()) { const ok = await safe(() => batchWrite(ops), `${n} işlem silindi · hesaplar yeni bakiyelerle başladı`); if (!ok) return; Drive.dirty(); }
-  else { S.txns = []; if (delPlans) S.plans = []; if (delCon) S.contacts = []; S.accounts = accs; saveDemo(); toast(`${n} işlem silindi · hesaplar yeni bakiyelerle başladı`); }
+  const n = S.txns.length, msg = (n ? `${n} işlem silindi · ` : "") + "hesaplar yeni bakiyelerle başladı";
+  if (live()) { const ok = await safe(() => batchWrite(ops), msg); if (!ok) return; Drive.dirty(); }
+  else { S.txns = []; if (delPlans) S.plans = []; if (delCon) S.contacts = []; S.accounts = accs; saveDemo(); toast(msg); }
   ls.set("kd-gmail-done", "{}"); SMSP = null; closeSheet(); render();
 }
 function accountPanel() {
@@ -2627,7 +2627,7 @@ document.addEventListener("click", async e => {
   if (d.fav) { const a = acc(d.fav); if (!a) return; put("accounts", { ...a, fav: !a.fav }); toast(a.fav ? `${a.name} favorilerden çıktı` : `⭐ ${a.name} favorilere eklendi`); return; }
   if (d.openAccount) { if (!acc(d.openAccount)) return; ui.tab = "hesaplar"; ls.set("kd-tab", "hesaplar"); ui.accView = d.openAccount; ui.accQ = ""; ui.accType = ""; closeSheet(); render(); window.scrollTo({ top: 0 }); return; }
   if (d.accPer) { ui.accPer = d.accPer; return render(); }
-  if (d.rs) { el.parentNode.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", b === el)); document.querySelectorAll(".rs-bal").forEach(i => { const a = acc(i.dataset.id); i.value = d.rs === "zero" ? "0" : amtStr(Math.round(balanceOf(a) * 100) / 100) || "0"; }); return; }
+  if (d.rs) { el.parentNode.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", b === el)); document.querySelectorAll(".rs-bal").forEach(i => { const a = acc(i.dataset.id); i.value = d.rs === "zero" || (d.rs === "cards" && isCredit(a)) ? "0" : amtStr(Math.round(balanceOf(a) * 100) / 100) || "0"; }); return; }
   if (d.cardPay) { const a = acc(d.cardPay); if (a) cardPayForm(a); return; }
   if (d.payamt) { $("#f-amount").value = amtStr(+d.payamt); el.parentNode.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", b === el)); return; }
   if (d.accType != null && el.closest("#accDetail")) { ui.accType = d.accType; return render(); }
@@ -2709,7 +2709,7 @@ document.addEventListener("click", async e => {
   if (a === "bill-new") return billForm();
   if (a === "notif") return enableNotifications();
   if (a === "notif-test") return testNotification();
-  if (a === "reset") { if (!S.txns.length) { toast("Silinecek işlem yok."); return; } return resetForm(); }
+  if (a === "reset") { if (!S.accounts.length) { toast("Sıfırlanacak hesap yok."); return; } return resetForm(); }
   if (a === "reset-go") { el.disabled = true; await resetTxns(); el.disabled = false; return; }
   if (a === "sms") return smsPanel(SMSP && SMSP.items.some(x => !x.bad && x.sel) ? undefined : "");
   if (a === "sms-read") return smsPanel($("#sms-text").value);
