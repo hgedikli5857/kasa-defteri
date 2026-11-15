@@ -2085,12 +2085,12 @@ const RESET_FIELDS = ["syncBal", "syncDate", "syncIds", "limitSyncAt", "syncSpen
 function resetForm() {
   const rows = S.accounts.map(a => { const b = balanceOf(a), code = accAsset(a);
     return `<div class="row" style="grid-template-columns:minmax(0,1fr) 150px;align-items:center"><div style="min-width:0"><div class="t" style="font-size:.9rem">${esc(accName(a))}</div><div class="m">şu an ${esc(fmtAsset(b, code))}${isCredit(a) ? " · kart borcu eksi yazılır" : ""}</div></div>
-      <input class="rs-bal num" data-id="${esc(a.id)}" inputmode="decimal" value="${amtStr(Math.round(b * 100) / 100) || "0"}" aria-label="${esc(accName(a))} başlangıç bakiyesi" style="text-align:right"></div>`; }).join("");
+      <input class="rs-bal num" data-id="${esc(a.id)}" inputmode="decimal" value="0" aria-label="${esc(accName(a))} başlangıç bakiyesi" style="text-align:right"></div>`; }).join("");
   openSheet("İşlemleri sıfırla", `<div class="form" id="resetPanel">
     <div class="notice warn" style="margin:0;display:block">${S.txns.length ? `<b>${S.txns.length} işlem kalıcı olarak silinecek.</b>` : "<b>Silinecek işlem yok;</b> sadece başlangıç bakiyeleri ve kart eşitlemeleri yenilenir."} Hesapların, kartların, limitleri ve ayarları kalır. ${S.plans.length || S.contacts.length ? "Vadeler ve cariler aşağıda seçmezsen kalır." : ""} Silmeden önce bilgisayarına/telefonuna otomatik bir <b>yedek dosyası</b> indirilir; istersen sonra "Yedek dosyasından yükle" ile geri dönebilirsin.</div>
     <div><b>Hesaplar hangi bakiyeyle başlasın?</b>
-      <div class="seg" role="group" style="margin:6px 0;flex-wrap:wrap"><button type="button" data-rs="keep" aria-pressed="true">Bugünkü bakiyeler</button><button type="button" data-rs="cards" aria-pressed="false">Kart borçları 0</button><button type="button" data-rs="zero" aria-pressed="false">Hepsi 0</button></div>
-      <p class="small-note" style="margin:0 0 6px">Her hesabın yeni başlangıç bakiyesini buradan düzeltebilirsin (bankadaki gerçek bakiyeyi yazman en doğrusu). Kart ekstre/limit eşitlemeleri de sıfırlanır.</p>
+      <div class="seg" role="group" style="margin:6px 0;flex-wrap:wrap"><button type="button" data-rs="zero" aria-pressed="true">Hepsi 0</button><button type="button" data-rs="cards" aria-pressed="false">Kart borçları 0</button><button type="button" data-rs="keep" aria-pressed="false">Bugünkü bakiyeler</button></div>
+      <p class="small-note" style="margin:0 0 6px">Varsayılan: <b>hepsi 0</b> (kart borçları dahil). Her hesabın yeni başlangıç bakiyesini buradan düzeltebilirsin (bankadaki gerçek bakiyeyi yazman en doğrusu). Kart ekstre/limit eşitlemeleri de sıfırlanır.</p>
       <div class="list" style="max-height:38vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:0 8px">${rows}</div></div>
     <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="rs-plans" style="width:auto"> Vadeleri de sil (${S.plans.length})</label>
     <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="rs-contacts" style="width:auto"> Carileri de sil (${S.contacts.length})</label>
