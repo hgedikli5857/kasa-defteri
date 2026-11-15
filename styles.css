@@ -216,3 +216,7 @@ html.wide .side-it.add{color:var(--accent);justify-content:flex-start;margin-top
 html.wide .side-g{flex:none;display:flex;justify-content:space-between;gap:8px;padding:12px 10px 4px;font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;border-top:1px solid var(--line);margin-top:4px}
 html.wide .side-g .num.neg{color:var(--neg)}
 html.wide .side-it small{display:block;font-size:.72rem;opacity:.7;line-height:1.2}
+html.wide .side-h{flex:none;font:700 1.05rem/1.2 var(--f-head,inherit);padding:6px 10px 8px}
+html.wide button.side-g{width:100%;background:none;border:0;border-top:1px solid var(--line);font-family:inherit;cursor:pointer;text-align:left;border-radius:0}
+html.wide button.side-g:hover{color:var(--ink)}
+html.wide .side-g.on{color:var(--accent)}

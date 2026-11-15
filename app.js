@@ -764,16 +764,50 @@ function sideFit() {
   const tabs = H.classList.contains("mobile") ? 72 : 0, hh = hd ? hd.offsetHeight : 0;
   H.style.setProperty("--side-top", hh + 12 + "px"); H.style.setProperty("--side-h", Math.max(200, innerHeight / z - hh - tabs - 24) + "px");
 }
+// Sol menü: seçili ana menünün ara menüleri (bölümler, filtreler, hesaplar…)
+const SEC = {}; // sekme → seçili bölüm ("" = tümü)
+function secLabel(el) {
+  const g = el.querySelector("[data-toggle-group]"); if (g) return g.dataset.toggleGroup;
+  const h = el.querySelector("h2,h3"); if (h) return h.textContent.trim();
+  return el.classList.contains("g-kpi") ? "Genel durum" : "";
+}
 function renderSide() {
   const el = $("#side"); if (!el) return;
   if (!document.documentElement.classList.contains("wide") || mode === "loading" || mode === "empty") { el.innerHTML = ""; return; }
-  const cur = ui.tab === "hesaplar" ? ui.accView : null;
-  const item = (a, full) => { const b = balanceOf(a), g = full ? groupOf(a) : ""; return `<button type="button" class="side-it${cur === a.id ? " on" : ""}" data-open-account="${esc(a.id)}" ${a.excl ? 'style="opacity:.65"' : ""}><span class="n">${g && g !== a.name ? `<small>${esc(g)}</small>` : ""}${isCredit(a) ? "💳 " : ""}${esc(a.name)}</span><span class="num ${b < -0.005 ? "neg" : ""}">${esc(fmtAsset(b, accAsset(a)))}</span></button>`; };
-  const favs = S.accounts.filter(a => a.fav);
-  let h = `<button type="button" class="side-it top${ui.tab === "hesaplar" && !cur ? " on" : ""}" data-tab="hesaplar"><span class="n">🏦 Tüm hesaplar</span><span class="num ${totalCash() < 0 ? "neg" : ""}">${money0(totalCash())}</span></button>`;
-  if (favs.length) h += `<div class="side-g"><span>⭐ Favoriler</span></div>${favs.map(a => item(a, true)).join("")}`;
-  for (const g of accountGroups()) h += `<div class="side-g"><span>${esc(g.name)}</span><span class="num ${g.total < 0 ? "neg" : ""}">${money0(g.total)}</span></div>${g.list.map(a => item(a)).join("")}`;
-  h += `<button type="button" class="side-it add" data-act="new-account"><span class="n">+ Hesap ekle</span></button>`;
+  const T = ui.tab, it = (t, attr, on, sub, cls) => `<button type="button" class="side-it${on ? " on" : ""}${cls ? " " + cls : ""}" ${attr}><span class="n">${t}</span>${sub != null ? `<span class="num${String(sub).startsWith("-") ? " neg" : ""}">${esc(sub)}</span>` : ""}</button>`;
+  const hd = t => `<div class="side-g"><span>${t}</span></div>`;
+  // bölümler: görünümdeki her ana blok bir ara menü
+  const secs = [...$("#view").children].map(x => ({ x, k: secLabel(x) })).filter(o => o.k);
+  const cur = SEC[T] && secs.some(o => o.k === SEC[T]) ? SEC[T] : "";
+  const inDetail = T === "hesaplar" && ui.accView && acc(ui.accView);
+  if (!inDetail) secs.forEach(o => { o.x.hidden = !!cur && o.k !== cur; });
+  let h = `<div class="side-h">${esc((TABS.find(x => x[0] === T) || [, ""])[1])}</div>`;
+  const secItems = () => secs.length > 1 ? it("Tümü", `data-side-sec=""`, !cur && !inDetail) + secs.map(o => it(esc(o.k.replace(/^[⭐🔔]\s*/u, "")), `data-side-sec="${esc(o.k)}"`, cur === o.k && !inDetail)).join("") : "";
+  if (T === "hesaplar") {
+    h += it("🏦 Genel bakış", `data-side-sec=""`, !cur && !inDetail, money0(totalCash()));
+    const favs = S.accounts.filter(a => a.fav), cards = S.accounts.filter(isCredit);
+    const ai = (a, full) => it(`${full && groupOf(a) !== a.name ? `<small>${esc(groupOf(a))}</small>` : ""}${isCredit(a) ? "💳 " : ""}${esc(a.name)}`, `data-open-account="${esc(a.id)}"`, inDetail && ui.accView === a.id, fmtAsset(balanceOf(a), accAsset(a)));
+    if (favs.length) h += hd("⭐ Favoriler") + favs.map(a => ai(a, true)).join("");
+    if (cards.length) h += hd("💳 Kredi kartları") + cards.map(a => ai(a, true)).join("");
+    for (const g of accountGroups()) h += `<button type="button" class="side-g click${cur === g.name && !inDetail ? " on" : ""}" data-side-sec="${esc(g.name)}"><span>${esc(g.name)}</span><span class="num${g.total < 0 ? " neg" : ""}">${money0(g.total)}</span></button>` + g.list.map(a => ai(a)).join("");
+    h += it("+ Hesap ekle", `data-act="new-account"`, false, null, "add");
+  } else if (T === "islemler") {
+    h += [["", "Tüm işlemler"], ["gelir", "Gelirler"], ["gider", "Giderler"], ["transfer", "Transferler"]].map(([k, l]) => it(l, `data-side-ftype="${k}"`, (ui.ftype || "") === k, String(S.txns.filter(t => !k || t.type === k).length))).join("");
+    h += hd("Hesaba göre") + it("Tüm hesaplar", `data-side-facc=""`, !ui.facc);
+    for (const g of accountGroups()) h += `<button type="button" class="side-g click${ui.facc === "g:" + g.name ? " on" : ""}" data-side-facc="g:${esc(g.name)}"><span>${esc(g.name)}</span></button>` + g.list.map(a => it(`${isCredit(a) ? "💳 " : ""}${esc(a.name)}`, `data-side-facc="${esc(a.id)}"`, ui.facc === a.id)).join("");
+  } else if (T === "vadeler") {
+    h += it("Bekleyen", `data-pv="bekliyor"`, ui.planView !== "tamam", String(pending().length)) + it("Tamamlanan", `data-pv="tamam"`, ui.planView === "tamam");
+    if (secs.length > 1) h += hd("Bölümler") + secItems();
+  } else if (T === "cariler") {
+    h += it("Tüm cariler", `data-side-sec=""`, true, String(S.contacts.length));
+    if (S.contacts.length) h += hd("Cariler") + S.contacts.slice().sort((a, b) => a.name.localeCompare(b.name, "tr")).map(c => { const n = cariStats(c).net; return it(esc(c.name), `data-show-contact="${esc(c.id)}"`, false, n ? (n < 0 ? "-" : "") + money0(Math.abs(n)) : null); }).join("");
+    h += it("+ Cari ekle", `data-act="new-contact"`, false, null, "add");
+  } else if (T === "giderler") {
+    h += it("Tümü", `data-side-sec=""`, true);
+    const bl = billsArr(); if (bl.length) h += hd("Sabit giderler") + bl.map(b => it(`${billIcon(b.name)} ${esc(b.name)}`, `data-bill-edit="${esc(b.id)}"`, false)).join("");
+    const cards = S.accounts.filter(x => isCredit(x) && (limitInfo(x) || balanceOf(x) < -0.005)); if (cards.length) h += hd("💳 Kart ödemeleri") + cards.map(a => it(esc(accName(a)), `data-card-pay="${esc(a.id)}"`, false, money0(-balanceOf(a)))).join("");
+    h += it("+ Gider ekle", `data-act="bill-new"`, false, null, "add");
+  } else h += secItems();
   const st = el.scrollTop; el.innerHTML = h; el.scrollTop = st;
 }
 const ZOOMS = [["normal", "Normal"], ["buyuk", "Büyük"], ["cokbuyuk", "Çok büyük"]];
@@ -812,7 +846,7 @@ function render0() {
   $("#tabs").innerHTML = TABS.map(([k, l]) => `<button class="tab" role="tab" aria-selected="${ui.tab === k}" data-tab="${k}"><span class="ti" aria-hidden="true">${TAB_ICON[k]}</span>${l}${k === "vadeler" && overdue ? `<span class="cnt">${overdue}</span>` : ""}${k === "giderler" && billLateN() ? `<span class="cnt">${billLateN()}</span>` : ""}</button>`).join("");
   const np = totalCash() + recv() - pay();
   const npEl = $("#netpos"); npEl.textContent = mode === "loading" ? "—" : money(np); npEl.className = "num " + (np < 0 ? "neg" : "");
-  renderNotice(); renderChips(); renderSide();
+  renderNotice(); renderChips();
   const v = $("#view");
   if (mode === "loading") { v.innerHTML = `<section class="panel empty"><h3>Defterin yükleniyor</h3><p>Kayıtların getiriliyor…</p></section>`; return; }
   if (mode === "empty") { v.innerHTML = emptyView(); return; }
@@ -820,6 +854,7 @@ function render0() {
   const qi = $("#fq"); if (qi && ui._focusQ) { qi.focus(); qi.setSelectionRange(qi.value.length, qi.value.length); ui._focusQ = false; }
   if (live()) { clearTimeout(render._rt); render._rt = setTimeout(syncReminders, 3000); }
   if (PENDING_SMS != null && (mode === "live" || mode === "demo")) { const t = PENDING_SMS; PENDING_SMS = null; try { history.replaceState(null, "", location.pathname); } catch (e) { } setTimeout(() => smsPanel(t), 300); }
+  renderSide();
   const aq = $("#accq"); if (aq && ui._focusAq) { aq.focus(); aq.setSelectionRange(aq.value.length, aq.value.length); ui._focusAq = false; }
 }
 function renderNotice() {
@@ -2655,12 +2690,15 @@ window.addEventListener("offline", renderChips);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && iso(new Date()) !== TODAY) render(); });
 
 document.addEventListener("click", async e => {
-  const el = e.target.closest("button,[data-edit-txn],[data-edit-plan],[data-edit-account],[data-open-account],[data-an-scope],[data-rep-scope],[data-show-contact],[data-batch],[data-bill-edit],.overlay");
+  const el = e.target.closest("button,[data-edit-txn],[data-edit-plan],[data-edit-account],[data-open-account],[data-an-scope],[data-rep-scope],[data-show-contact],[data-batch],[data-bill-edit],[data-side-sec],[data-side-ftype],[data-side-facc],.overlay");
   if (!el) return;
   if (el.id === "ov" && e.target === el) return closeSheet();
   const d = el.dataset;
   if (d.tab) { ui.tab = d.tab; ui.accView = null; ls.set("kd-tab", d.tab); closeSheet(); render(); window.scrollTo({ top: 0 }); return; }
   if (d.fav) { const a = acc(d.fav); if (!a) return; put("accounts", { ...a, fav: !a.fav }); toast(a.fav ? `${a.name} favorilerden çıktı` : `⭐ ${a.name} favorilere eklendi`); return; }
+  if (d.sideSec != null) { SEC[ui.tab] = d.sideSec; if (ui.tab === "hesaplar") ui.accView = null; render(); window.scrollTo({ top: 0 }); return; }
+  if (d.sideFtype != null) { ui.ftype = d.sideFtype; render(); window.scrollTo({ top: 0 }); return; }
+  if (d.sideFacc != null) { ui.facc = d.sideFacc; render(); window.scrollTo({ top: 0 }); return; }
   if (d.openAccount) { if (!acc(d.openAccount)) return; ui.tab = "hesaplar"; ls.set("kd-tab", "hesaplar"); ui.accView = d.openAccount; ui.accQ = ""; ui.accType = ""; closeSheet(); render(); window.scrollTo({ top: 0 }); return; }
   if (d.accPer) { ui.accPer = d.accPer; return render(); }
   if (d.zoom) { ls.set("kd-zoom", d.zoom); applyMobile(); el.parentNode.querySelectorAll("[data-zoom]").forEach(b => b.setAttribute("aria-pressed", b === el)); return; }
