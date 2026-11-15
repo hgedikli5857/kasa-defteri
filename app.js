@@ -748,8 +748,14 @@ const TAB_ICON = { ozet: "🏠", islemler: "↕️", giderler: "🧾", vadeler: 
 // mobil görünüm: telefonda (≤640 px) ya da dokunmatik tablette otomatik; elle açılıp kapatılabilir (kd-mobile: "1" açık, "0" kapalı)
 function applyMobile() {
   const pref = ls.get("kd-mobile"), auto = innerWidth <= 640 || (matchMedia("(pointer:coarse)").matches && innerWidth <= 1400);
-  document.documentElement.classList.toggle("mobile", pref === "1" || (pref !== "0" && auto));
+  const H = document.documentElement; H.classList.toggle("mobile", pref === "1" || (pref !== "0" && auto));
+  H.classList.toggle("standalone", matchMedia("(display-mode: standalone)").matches || navigator.standalone === true);
+  // yazı boyutu (zoom): kayıtlı seçim ya da ekrana göre varsayılan (tablette büyük)
+  const zs = { normal: 1, buyuk: 1.18, cokbuyuk: 1.36 }, z = zs[ls.get("kd-zoom")] || (innerWidth >= 700 ? 1.36 : 1.08);
+  H.style.setProperty("--z", String(z));
 }
+const ZOOMS = [["normal", "Normal"], ["buyuk", "Büyük"], ["cokbuyuk", "Çok büyük"]];
+const zoomKey = () => ls.get("kd-zoom") || (innerWidth >= 700 ? "cokbuyuk" : "normal");
 const isMobileView = () => document.documentElement.classList.contains("mobile");
 applyMobile(); addEventListener("resize", applyMobile);
 function showApp() { $("#loginRoot").hidden = true; $("#appRoot").hidden = false; render(); }
@@ -2129,7 +2135,7 @@ function accountPanel() {
   openSheet("Hesabım", `<div class="form">
     <div style="display:flex;gap:12px;align-items:center">${user.photoURL ? `<img src="${esc(user.photoURL)}" alt="" width="44" height="44" style="border-radius:50%" referrerpolicy="no-referrer">` : ""}<div><b>${esc(user.displayName || "")}</b><div class="muted" style="font-size:.88rem">${esc(user.email || "")}</div></div></div>
     <p class="muted" style="margin:0;font-size:.88rem">Bu Google hesabıyla girdiğin tüm cihazlarda aynı kayıtları görürsün.</p>
-    <div class="foot" style="justify-content:flex-start;flex-wrap:wrap"><button class="btn" data-act="export-json">Yedek dosyası indir</button><button class="btn" data-act="import">Yedek dosyasından yükle</button><button class="btn" data-act="reset">İşlemleri sıfırla</button><button class="btn" data-act="mobile-toggle">📱 Mobil görünüm: ${isMobileView() ? "açık" : "kapalı"}</button><button class="btn" data-act="cats">Kategoriler</button><button class="btn" data-act="rates">Kurlar</button></div>
+    <div class="foot" style="justify-content:flex-start;flex-wrap:wrap"><button class="btn" data-act="export-json">Yedek dosyası indir</button><button class="btn" data-act="import">Yedek dosyasından yükle</button><button class="btn" data-act="reset">İşlemleri sıfırla</button><button class="btn" data-act="mobile-toggle">📱 Mobil görünüm: ${isMobileView() ? "açık" : "kapalı"}</button>${isMobileView() ? `<span style="display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="muted" style="font-size:.85rem">Yazı boyutu:</span>${ZOOMS.map(([k, l]) => `<button class="btn small" data-zoom="${k}" aria-pressed="${zoomKey() === k}">${l}</button>`).join("")}</span>` : ""}<button class="btn" data-act="cats">Kategoriler</button><button class="btn" data-act="rates">Kurlar</button></div>
     <div class="foot"><span></span><div class="r"><button class="btn danger" data-act="signout">Çıkış yap</button></div></div></div>`);
 }
 function ratesPanel() {
@@ -2635,6 +2641,7 @@ document.addEventListener("click", async e => {
   if (d.fav) { const a = acc(d.fav); if (!a) return; put("accounts", { ...a, fav: !a.fav }); toast(a.fav ? `${a.name} favorilerden çıktı` : `⭐ ${a.name} favorilere eklendi`); return; }
   if (d.openAccount) { if (!acc(d.openAccount)) return; ui.tab = "hesaplar"; ls.set("kd-tab", "hesaplar"); ui.accView = d.openAccount; ui.accQ = ""; ui.accType = ""; closeSheet(); render(); window.scrollTo({ top: 0 }); return; }
   if (d.accPer) { ui.accPer = d.accPer; return render(); }
+  if (d.zoom) { ls.set("kd-zoom", d.zoom); applyMobile(); el.parentNode.querySelectorAll("[data-zoom]").forEach(b => b.setAttribute("aria-pressed", b === el)); return; }
   if (d.rs) { el.parentNode.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", b === el)); document.querySelectorAll(".rs-bal").forEach(i => { const a = acc(i.dataset.id); i.value = d.rs === "zero" || (d.rs === "cards" && isCredit(a)) ? "0" : amtStr(Math.round(balanceOf(a) * 100) / 100) || "0"; }); return; }
   if (d.cardPay) { const a = acc(d.cardPay); if (a) cardPayForm(a); return; }
   if (d.payamt) { $("#f-amount").value = amtStr(+d.payamt); el.parentNode.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", b === el)); return; }

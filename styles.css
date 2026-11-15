@@ -154,7 +154,16 @@ button.chip:hover{border-color:var(--muted)}
 .small-note{font-size:.8rem;color:var(--muted)}
 
 /* mobil görünüm (telefonda otomatik; tablette/bilgisayarda "Mobil görünüm" ile): tek sütun, alt gezinme çubuğu, + düğmesi */
+html.mobile body{zoom:var(--z,1)} /* yazı boyutu: telefonda ~%110, tablette ~%135; hesabım menüsünden değişir */
 html.mobile .wrap{max-width:600px}
+html.mobile body{font-size:16px}
+html.mobile .btn{padding:10px 14px;min-height:42px}
+html.mobile .btn.small{padding:7px 11px;min-height:34px}
+html.mobile input,html.mobile select,html.mobile textarea{font-size:16px}
+html.mobile .row{padding-block:12px}
+html.mobile .tab{font-size:.72rem}
+html.mobile .tab .ti{font-size:1.3rem}
+html.mobile.standalone header.top{padding-top:env(safe-area-inset-top,0px)}
 html.mobile .g-kpi{grid-template-columns:repeat(2,minmax(0,1fr))}
 html.mobile .g-2{grid-template-columns:minmax(0,1fr)}
 html.mobile .kpi .val{font-size:1.08rem}
