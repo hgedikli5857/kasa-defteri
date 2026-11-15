@@ -753,6 +753,28 @@ function applyMobile() {
   // yazı boyutu (zoom): kayıtlı seçim ya da ekrana göre varsayılan (tablette büyük)
   const zs = { normal: 1, buyuk: 1.18, cokbuyuk: 1.36 }, z = zs[ls.get("kd-zoom")] || (innerWidth >= 700 ? 1.36 : 1.08);
   H.style.setProperty("--z", String(z));
+  // geniş ekran (yatay tablet, bilgisayar): solda hesap listesi
+  const side = ls.get("kd-side") !== "0" && innerWidth / (H.classList.contains("mobile") ? z : 1) >= 720;
+  if (H.classList.contains("wide") !== side) { H.classList.toggle("wide", side); if (typeof render === "function" && !$("#appRoot").hidden) render(); }
+  sideFit();
+}
+// kenar çubuğu yüksekliği: başlık ile alt sekmeler arasına sığsın
+function sideFit() {
+  const H = document.documentElement, z = H.classList.contains("mobile") ? +H.style.getPropertyValue("--z") || 1 : 1, hd = document.querySelector("header.top");
+  const tabs = H.classList.contains("mobile") ? 72 : 0, hh = hd ? hd.offsetHeight : 0;
+  H.style.setProperty("--side-top", hh + 12 + "px"); H.style.setProperty("--side-h", Math.max(200, innerHeight / z - hh - tabs - 24) + "px");
+}
+function renderSide() {
+  const el = $("#side"); if (!el) return;
+  if (!document.documentElement.classList.contains("wide") || mode === "loading" || mode === "empty") { el.innerHTML = ""; return; }
+  const cur = ui.tab === "hesaplar" ? ui.accView : null;
+  const item = (a, full) => { const b = balanceOf(a), g = full ? groupOf(a) : ""; return `<button type="button" class="side-it${cur === a.id ? " on" : ""}" data-open-account="${esc(a.id)}" ${a.excl ? 'style="opacity:.65"' : ""}><span class="n">${g && g !== a.name ? `<small>${esc(g)}</small>` : ""}${isCredit(a) ? "💳 " : ""}${esc(a.name)}</span><span class="num ${b < -0.005 ? "neg" : ""}">${esc(fmtAsset(b, accAsset(a)))}</span></button>`; };
+  const favs = S.accounts.filter(a => a.fav);
+  let h = `<button type="button" class="side-it top${ui.tab === "hesaplar" && !cur ? " on" : ""}" data-tab="hesaplar"><span class="n">🏦 Tüm hesaplar</span><span class="num ${totalCash() < 0 ? "neg" : ""}">${money0(totalCash())}</span></button>`;
+  if (favs.length) h += `<div class="side-g"><span>⭐ Favoriler</span></div>${favs.map(a => item(a, true)).join("")}`;
+  for (const g of accountGroups()) h += `<div class="side-g"><span>${esc(g.name)}</span><span class="num ${g.total < 0 ? "neg" : ""}">${money0(g.total)}</span></div>${g.list.map(a => item(a)).join("")}`;
+  h += `<button type="button" class="side-it add" data-act="new-account"><span class="n">+ Hesap ekle</span></button>`;
+  const st = el.scrollTop; el.innerHTML = h; el.scrollTop = st;
 }
 const ZOOMS = [["normal", "Normal"], ["buyuk", "Büyük"], ["cokbuyuk", "Çok büyük"]];
 const zoomKey = () => ls.get("kd-zoom") || (innerWidth >= 700 ? "cokbuyuk" : "normal");
@@ -790,7 +812,7 @@ function render0() {
   $("#tabs").innerHTML = TABS.map(([k, l]) => `<button class="tab" role="tab" aria-selected="${ui.tab === k}" data-tab="${k}"><span class="ti" aria-hidden="true">${TAB_ICON[k]}</span>${l}${k === "vadeler" && overdue ? `<span class="cnt">${overdue}</span>` : ""}${k === "giderler" && billLateN() ? `<span class="cnt">${billLateN()}</span>` : ""}</button>`).join("");
   const np = totalCash() + recv() - pay();
   const npEl = $("#netpos"); npEl.textContent = mode === "loading" ? "—" : money(np); npEl.className = "num " + (np < 0 ? "neg" : "");
-  renderNotice(); renderChips();
+  renderNotice(); renderChips(); renderSide();
   const v = $("#view");
   if (mode === "loading") { v.innerHTML = `<section class="panel empty"><h3>Defterin yükleniyor</h3><p>Kayıtların getiriliyor…</p></section>`; return; }
   if (mode === "empty") { v.innerHTML = emptyView(); return; }
@@ -2129,13 +2151,13 @@ async function resetTxns() {
 function accountPanel() {
   if (mode === "demo") {
     openSheet("Deneme modu", `<div class="form"><p style="margin:0">Firebase ayarları yapılmadığı için kayıtlar yalnızca bu cihazda tutuluyor. <b>firebase-config.js</b> dosyasını doldurduğunda Google ile giriş, anlık senkron ve Drive yedeği açılır.</p>
-      <div class="foot" style="justify-content:flex-start"><button class="btn" data-act="export-json">Yedek dosyası indir</button><button class="btn" data-act="import">Yedek dosyasından yükle</button><button class="btn" data-act="reset">İşlemleri sıfırla</button><button class="btn" data-act="mobile-toggle">📱 Mobil görünüm: ${isMobileView() ? "açık" : "kapalı"}</button></div></div>`);
+      <div class="foot" style="justify-content:flex-start"><button class="btn" data-act="export-json">Yedek dosyası indir</button><button class="btn" data-act="import">Yedek dosyasından yükle</button><button class="btn" data-act="reset">İşlemleri sıfırla</button><button class="btn" data-act="mobile-toggle">📱 Mobil görünüm: ${isMobileView() ? "açık" : "kapalı"}</button><button class="btn" data-act="side-toggle">📑 Soldaki hesap listesi: ${ls.get("kd-side") === "0" ? "kapalı" : "açık"}</button></div></div>`);
     return;
   }
   openSheet("Hesabım", `<div class="form">
     <div style="display:flex;gap:12px;align-items:center">${user.photoURL ? `<img src="${esc(user.photoURL)}" alt="" width="44" height="44" style="border-radius:50%" referrerpolicy="no-referrer">` : ""}<div><b>${esc(user.displayName || "")}</b><div class="muted" style="font-size:.88rem">${esc(user.email || "")}</div></div></div>
     <p class="muted" style="margin:0;font-size:.88rem">Bu Google hesabıyla girdiğin tüm cihazlarda aynı kayıtları görürsün.</p>
-    <div class="foot" style="justify-content:flex-start;flex-wrap:wrap"><button class="btn" data-act="export-json">Yedek dosyası indir</button><button class="btn" data-act="import">Yedek dosyasından yükle</button><button class="btn" data-act="reset">İşlemleri sıfırla</button><button class="btn" data-act="mobile-toggle">📱 Mobil görünüm: ${isMobileView() ? "açık" : "kapalı"}</button>${isMobileView() ? `<span style="display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="muted" style="font-size:.85rem">Yazı boyutu:</span>${ZOOMS.map(([k, l]) => `<button class="btn small" data-zoom="${k}" aria-pressed="${zoomKey() === k}">${l}</button>`).join("")}</span>` : ""}<button class="btn" data-act="cats">Kategoriler</button><button class="btn" data-act="rates">Kurlar</button></div>
+    <div class="foot" style="justify-content:flex-start;flex-wrap:wrap"><button class="btn" data-act="export-json">Yedek dosyası indir</button><button class="btn" data-act="import">Yedek dosyasından yükle</button><button class="btn" data-act="reset">İşlemleri sıfırla</button><button class="btn" data-act="mobile-toggle">📱 Mobil görünüm: ${isMobileView() ? "açık" : "kapalı"}</button><button class="btn" data-act="side-toggle">📑 Soldaki hesap listesi: ${ls.get("kd-side") === "0" ? "kapalı" : "açık"}</button>${isMobileView() ? `<span style="display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap"><span class="muted" style="font-size:.85rem">Yazı boyutu:</span>${ZOOMS.map(([k, l]) => `<button class="btn small" data-zoom="${k}" aria-pressed="${zoomKey() === k}">${l}</button>`).join("")}</span>` : ""}<button class="btn" data-act="cats">Kategoriler</button><button class="btn" data-act="rates">Kurlar</button></div>
     <div class="foot"><span></span><div class="r"><button class="btn danger" data-act="signout">Çıkış yap</button></div></div></div>`);
 }
 function ratesPanel() {
@@ -2724,6 +2746,7 @@ document.addEventListener("click", async e => {
   if (a === "bill-new") return billForm();
   if (a === "notif") return enableNotifications();
   if (a === "notif-test") return testNotification();
+  if (a === "side-toggle") { ls.set("kd-side", ls.get("kd-side") === "0" ? "1" : "0"); applyMobile(); closeSheet(); render(); toast(ls.get("kd-side") === "0" ? "Hesap listesi kapalı" : document.documentElement.classList.contains("wide") ? "Hesap listesi açık" : "Hesap listesi geniş ekranda (yatay) görünür"); return; }
   if (a === "mobile-toggle") { ls.set("kd-mobile", isMobileView() ? "0" : "1"); applyMobile(); closeSheet(); render(); toast(isMobileView() ? "Mobil görünüm açık" : "Mobil görünüm kapalı"); return; }
   if (a === "reset") { if (!S.accounts.length) { toast("Sıfırlanacak hesap yok."); return; } return resetForm(); }
   if (a === "reset-go") { el.disabled = true; await resetTxns(); el.disabled = false; return; }

@@ -196,3 +196,23 @@ html.mobile .cards{grid-template-columns:minmax(0,1fr)}
 .csum .big{font:600 1.18rem var(--f-num);font-variant-numeric:tabular-nums}
 .csum-rows{display:grid;grid-template-columns:1fr auto;gap:2px 10px;font-size:.82rem}
 .csum-rows span{color:var(--muted)}
+
+/* geniş ekran: solda hesap listesi (ana menüler altta/üstte kalır) */
+.side{display:none}
+html.wide .shell{display:grid;grid-template-columns:240px minmax(0,1fr);gap:16px;align-items:start}
+html.wide.mobile .wrap{max-width:1180px}
+html.wide.mobile .tabs{max-width:none}
+html.wide.mobile #addBtn{right:16px}
+html.wide .side{display:flex;flex-direction:column;gap:1px;position:sticky;top:var(--side-top,90px);margin-top:18px;max-height:var(--side-h,70vh);overflow-y:auto;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:8px;scrollbar-width:thin}
+html.wide .side-it{flex:none;display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;text-align:left;background:none;border:0;border-radius:9px;padding:9px 10px;color:var(--ink);font:inherit;font-size:.9rem;cursor:pointer;min-height:40px}
+html.wide .side-it .n{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+html.wide .side-it .num{flex:none;font-size:.8rem;color:var(--muted)}
+html.wide .side-it .num.neg{color:var(--neg)}
+html.wide .side-it:hover{background:var(--bg)}
+html.wide .side-it.on{background:var(--accent);color:var(--accent-ink)}
+html.wide .side-it.on .num{color:inherit;opacity:.85}
+html.wide .side-it.top{font-weight:600}
+html.wide .side-it.add{color:var(--accent);justify-content:flex-start;margin-top:6px}
+html.wide .side-g{flex:none;display:flex;justify-content:space-between;gap:8px;padding:12px 10px 4px;font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;border-top:1px solid var(--line);margin-top:4px}
+html.wide .side-g .num.neg{color:var(--neg)}
+html.wide .side-it small{display:block;font-size:.72rem;opacity:.7;line-height:1.2}
