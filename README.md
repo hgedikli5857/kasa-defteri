@@ -124,6 +124,9 @@ Banka hareketlerini tek tek yazmak yerine:
 ## Ekstre görseli (ekran görüntüsü) okuma
 Görsel önce büyütülüp kontrastı açılır, karanlık tema otomatik çevrilir. OCR'ın rakam hataları (O→0, l→1, "1.250.00"→"1.250,00", ₺'nin H/t okunması) düzeltilir. İşaretsiz tutarlarda işaret yazının renginden (kırmızı = çıkan, yeşil = giren) ya da aynı görseldeki "+" tutarlardan anlaşılır. **📷 Fotoğraf çek** ile bilgisayar ekranından ya da kâğıt ekstreden doğrudan fotoğraf da alınır: eğiklik otomatik düzeltilir, parlama/gölge dengelenir; az satır okunursa görsel güçlü ön işlemeyle ikinci kez okunur. Önizlemede tutarlar düzenlenebilir: yanlış okunanı üstüne dokunup düzelt; **Görseli göster** ile karşılaştır.
 
+## İşlemleri sıfırla (hesaplar kalır)
+**Hesaplar → ↺ Sıfırla** (ya da sağ üstteki hesabım → İşlemleri sıfırla). Tüm işlemler silinir; hesaplar, kartlar, limitler ve ayarlar kalır. Her hesabın başlangıç bakiyesi seçilir (bugünkü bakiyeler ya da hepsi 0, tek tek düzeltilebilir); kart ekstre/limit eşitlemeleri temizlenir. İstenirse vadeler ve cariler de silinir. Onay için **SIFIRLA** yazılır ve silmeden önce otomatik yedek dosyası indirilir. Sonra yüklenen ekstrelerde/SMS'lerde başlangıç tarihinden önceki hareketler (zaten bakiyede olduğu için) seçili gelmez.
+
 ## Kart SMS'lerinden işlem ekleme
 **İşlemler → 📩 SMS** (ya da mesajlar uygulamasında SMS'e uzun bas → **Paylaş → Kasa Defteri**). Bankanın kart SMS'lerinden tutar, işyeri, tarih/saat, kartın son 4 hanesi, taksit, döviz tutarı ve kalan limit okunur; kart son 4 haneden tanınır (bilinmeyen kart için bir kez hesap seçilir, sonra öğrenilir). Harcama gider, iade gelir, kart ödemesi banka hesabından karta transfer olarak eklenir; kalan limit yazıyorsa kart borcu bankayla eşitlenir; ekstre SMS'i kartın ekstre borcu/asgari/son ödemesini günceller. Doğrulama kodu SMS'leri atlanır, aynı SMS iki kez eklenmez, sonra yüklenen ekstredeki aynı harcama SMS kaydının yerine geçer.
 

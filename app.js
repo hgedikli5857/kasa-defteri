@@ -516,7 +516,7 @@ function smsItems(texts) {
     let cat = p.pay ? "" : IMP.guessCategory(p.desc, p.type === "gelir" ? 1 : -1, learned);
     if (!p.pay && !cat.includes("|")) { const g = IMP.guessSub(p.desc); if (g && subsOf(p.type, cat).includes(g)) cat += "|" + g; }
     const near = t => Math.abs(diffDays(t.date, p.date)) <= 3 && Math.abs(t.amount - p.amount) < 0.01;
-    const exact = S.txns.some(t => t.smsKey === key) || seen.has(key); seen.add(key);
+    const exact = S.txns.some(t => t.smsKey === key) || seen.has(key) || (accId && acc(accId)?.openingDate && p.date < acc(accId).openingDate); seen.add(key);
     const maybe = !exact && accId && S.txns.some(t => p.pay ? t.type === "transfer" && t.toAccountId === accId && near(t) : t.accountId === accId && t.type === p.type && near(t));
     return { text, p, key, accId, cat, dup: exact ? "var" : maybe ? "olası" : "", sel: !exact && !maybe && !!accId };
   });
@@ -960,7 +960,7 @@ function viewHesaplar() {
   const gs = accountGroups(), total = totalCash(), assets = sum(gs, g => g.assets), debts = sum(gs, g => g.debts);
   let collapsed = {}; try { collapsed = JSON.parse(ls.get("kd-collapsed") || "{}"); } catch (e) { }
   return `<section class="panel"><div class="ph"><div><h2>Hesaplar</h2><p>${gs.length} grup · ${S.accounts.length} hesap</p></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="import-stmt">⇣ Ekstre</button><button class="btn" data-act="new-transfer">⇄ Transfer</button><button class="btn" data-act="new-cash">+ Nakit</button><button class="btn primary" data-act="new-account">+ Hesap</button></div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="import-stmt">⇣ Ekstre</button><button class="btn" data-act="new-transfer">⇄ Transfer</button><button class="btn" data-act="new-cash">+ Nakit</button><button class="btn" data-act="reset" title="Hesaplar kalır, işlemler silinir">↺ Sıfırla</button><button class="btn primary" data-act="new-account">+ Hesap</button></div></div>
     <div class="grid g-kpi" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
       <div class="kpi" style="padding:4px 0"><div class="lbl">Nakit</div><div class="val">${money(cashTotal())}</div></div>
       <div class="kpi" style="padding:4px 0"><div class="lbl">Varlıklar</div><div class="val pos">${money(assets)}</div></div>
@@ -2080,16 +2080,48 @@ async function bulkApply() {
   toast(`${ops.length} işlem güncellendi`); ui.bulk = null; closeSheet();
 }
 
+/* ---------- işlemleri sıfırla (hesaplar kalır) ---------- */
+const RESET_FIELDS = ["syncBal", "syncDate", "syncIds", "limitSyncAt", "syncSpent", "spentDate", "spentIds", "stmtDebt", "stmtDate", "minPay", "dueDate", "futInst", "futInstDate"];
+function resetForm() {
+  const rows = S.accounts.map(a => { const b = balanceOf(a), code = accAsset(a);
+    return `<div class="row" style="grid-template-columns:minmax(0,1fr) 150px;align-items:center"><div style="min-width:0"><div class="t" style="font-size:.9rem">${esc(accName(a))}</div><div class="m">şu an ${esc(fmtAsset(b, code))}${isCredit(a) ? " · kart borcu eksi yazılır" : ""}</div></div>
+      <input class="rs-bal num" data-id="${esc(a.id)}" inputmode="decimal" value="${amtStr(Math.round(b * 100) / 100) || "0"}" aria-label="${esc(accName(a))} başlangıç bakiyesi" style="text-align:right"></div>`; }).join("");
+  openSheet("İşlemleri sıfırla", `<div class="form" id="resetPanel">
+    <div class="notice warn" style="margin:0;display:block"><b>${S.txns.length} işlem kalıcı olarak silinecek.</b> Hesapların, kartların, limitleri ve ayarları kalır. ${S.plans.length || S.contacts.length ? "Vadeler ve cariler aşağıda seçmezsen kalır." : ""} Silmeden önce bilgisayarına/telefonuna otomatik bir <b>yedek dosyası</b> indirilir; istersen sonra "Yedek dosyasından yükle" ile geri dönebilirsin.</div>
+    <div><b>Hesaplar hangi bakiyeyle başlasın?</b>
+      <div class="seg" role="group" style="margin:6px 0"><button type="button" data-rs="keep" aria-pressed="true">Bugünkü bakiyeler</button><button type="button" data-rs="zero" aria-pressed="false">Hepsi 0</button></div>
+      <p class="small-note" style="margin:0 0 6px">Her hesabın yeni başlangıç bakiyesini buradan düzeltebilirsin (bankadaki gerçek bakiyeyi yazman en doğrusu). Kart ekstre/limit eşitlemeleri de sıfırlanır.</p>
+      <div class="list" style="max-height:38vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:0 8px">${rows}</div></div>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="rs-plans" style="width:auto"> Vadeleri de sil (${S.plans.length})</label>
+    <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="rs-contacts" style="width:auto"> Carileri de sil (${S.contacts.length})</label>
+    <label>Onaylamak için <b>SIFIRLA</b> yaz<input id="rs-confirm" autocomplete="off" placeholder="SIFIRLA"></label>
+    <div class="foot"><span></span><div class="r"><button type="button" class="btn" data-close>Vazgeç</button><button type="button" class="btn danger" data-act="reset-go">Yedeği indir ve sıfırla</button></div></div></div>`);
+}
+async function resetTxns() {
+  if (($("#rs-confirm").value || "").trim().toLocaleUpperCase("tr") !== "SIFIRLA") { toast("Onay için SIFIRLA yaz."); $("#rs-confirm").focus(); return; }
+  const bal = {}; document.querySelectorAll(".rs-bal").forEach(i => { bal[i.dataset.id] = parseAmt(i.value) || 0; });
+  const delPlans = $("#rs-plans").checked, delCon = $("#rs-contacts").checked;
+  saveFile(`kasa-defteri-yedek-${TODAY}-sifirlama-oncesi.json`, JSON.stringify(snapshotData(), null, 1), "application/json"); // güvenlik yedeği
+  const ops = S.txns.map(t => ({ type: "delete", col: "txns", id: t.id }));
+  if (delPlans) S.plans.forEach(p => ops.push({ type: "delete", col: "plans", id: p.id }));
+  if (delCon) S.contacts.forEach(c => ops.push({ type: "delete", col: "contacts", id: c.id }));
+  const accs = S.accounts.map(a => { const o = { ...a, opening: Math.round((bal[a.id] ?? 0) * 100) / 100, openingDate: TODAY }; RESET_FIELDS.forEach(k => delete o[k]); return o; });
+  accs.forEach(a => { const { id, ...d } = a; ops.push({ type: "set", col: "accounts", id, data: d }); });
+  const n = S.txns.length;
+  if (live()) { const ok = await safe(() => batchWrite(ops), `${n} işlem silindi · hesaplar yeni bakiyelerle başladı`); if (!ok) return; Drive.dirty(); }
+  else { S.txns = []; if (delPlans) S.plans = []; if (delCon) S.contacts = []; S.accounts = accs; saveDemo(); toast(`${n} işlem silindi · hesaplar yeni bakiyelerle başladı`); }
+  ls.set("kd-gmail-done", "{}"); SMSP = null; closeSheet(); render();
+}
 function accountPanel() {
   if (mode === "demo") {
     openSheet("Deneme modu", `<div class="form"><p style="margin:0">Firebase ayarları yapılmadığı için kayıtlar yalnızca bu cihazda tutuluyor. <b>firebase-config.js</b> dosyasını doldurduğunda Google ile giriş, anlık senkron ve Drive yedeği açılır.</p>
-      <div class="foot" style="justify-content:flex-start"><button class="btn" data-act="export-json">Yedek dosyası indir</button><button class="btn" data-act="import">Yedek dosyasından yükle</button></div></div>`);
+      <div class="foot" style="justify-content:flex-start"><button class="btn" data-act="export-json">Yedek dosyası indir</button><button class="btn" data-act="import">Yedek dosyasından yükle</button><button class="btn" data-act="reset">İşlemleri sıfırla</button></div></div>`);
     return;
   }
   openSheet("Hesabım", `<div class="form">
     <div style="display:flex;gap:12px;align-items:center">${user.photoURL ? `<img src="${esc(user.photoURL)}" alt="" width="44" height="44" style="border-radius:50%" referrerpolicy="no-referrer">` : ""}<div><b>${esc(user.displayName || "")}</b><div class="muted" style="font-size:.88rem">${esc(user.email || "")}</div></div></div>
     <p class="muted" style="margin:0;font-size:.88rem">Bu Google hesabıyla girdiğin tüm cihazlarda aynı kayıtları görürsün.</p>
-    <div class="foot" style="justify-content:flex-start;flex-wrap:wrap"><button class="btn" data-act="export-json">Yedek dosyası indir</button><button class="btn" data-act="import">Yedek dosyasından yükle</button><button class="btn" data-act="cats">Kategoriler</button><button class="btn" data-act="rates">Kurlar</button></div>
+    <div class="foot" style="justify-content:flex-start;flex-wrap:wrap"><button class="btn" data-act="export-json">Yedek dosyası indir</button><button class="btn" data-act="import">Yedek dosyasından yükle</button><button class="btn" data-act="reset">İşlemleri sıfırla</button><button class="btn" data-act="cats">Kategoriler</button><button class="btn" data-act="rates">Kurlar</button></div>
     <div class="foot"><span></span><div class="r"><button class="btn danger" data-act="signout">Çıkış yap</button></div></div></div>`);
 }
 function ratesPanel() {
@@ -2281,6 +2313,8 @@ function buildImpItems() {
       || t.type === "transfer" && (type === "gider" && t.accountId === imp.accountId && Math.abs(t.amount - amt) < 0.01 || type === "gelir" && t.toAccountId === imp.accountId && Math.abs((t.toAmount ?? t.amount) - amt) < 0.01)));
     const D = IMP.up(x.desc), ct = contacts.find(c => D.includes(c.n));
     const isCard = acc(imp.accountId)?.kind === "kredi kartı";
+    const od = acc(imp.accountId)?.openingDate; // sıfırlamadan önceki hareketler başlangıç bakiyesinin içinde
+    if (od && x.date < od) return { ...x, key, type, amt, dup: "önce", sel: false, cat: "", contactId: "" };
     const fb0 = IMP.feeBase(x.desc);
     if (fb0 && x.amount < 0 && mainK.has(x.date + "|" + amt.toFixed(2) + "|" + IMP.learnKey(fb0))) return { ...x, key, type, amt, dup: "ücret", sel: false, cat: "Banka masrafı", contactId: "" };
     if (isCard && ((x.amount > 0 && /ODEME|ÖDEME|TESEKKUR|TEŞEKKÜR|PAYMENT|HESAPTAN/i.test(IMP.up(x.desc))) || /TESEKKUR|TEŞEKKÜR|ÖDEMENİZ|ODEMENIZ/.test(IMP.up(x.desc)))) {
@@ -2372,7 +2406,7 @@ function renderImport() {
       ${items.slice(0, 600).map((x, i) => `<div class="row" style="grid-template-columns:auto minmax(0,1fr) auto;opacity:${x.sel ? 1 : .55}">
         <input type="checkbox" class="imp-sel" data-i="${i}" ${x.sel ? "checked" : ""} style="width:auto" aria-label="Seç">
         <div style="min-width:0"><div class="t" style="font-size:.9rem;font-weight:500">${esc(x.desc || "(açıklama yok)")}</div>
-          <div class="m">${dshort(x.date)}${x.dup ? ` · <span style="color:var(--warn)">${x.dup === "var" ? "zaten eklendi" : x.dup === "ücret" ? "taksit ücret satırı alışveriş tutarıyla okunmuş: eklenmez" : x.dup === "kart" ? "kart ödemesi: gelir değil, bankadan karta transfer olarak gir" : x.dup === "taksit" ? `${x.instPart.k}/${x.instPart.n}. taksit: alışveriş zaten kayıtlı` : x.dup === "elle" ? `elle girdiğin ${money(x.manAmt)} kaydın yerine geçer` : x.dup === "elle?" ? `elle girdiğin ${money(x.manAmt)} (${esc(x.manCat)}) kaydınla aynı olabilir` : "olası tekrar"}</span>` : ""}${x.inst ? ` · <span class="pill acc">${x.inst} taksit · aylık ${money(x.instPer)}</span> <span class="muted">(ekstrede ${x.instPart.k}/${x.inst}. taksit)</span>` : ""}${x.contactId ? ` · ${esc(con(x.contactId)?.name || "")}` : ""}</div>
+          <div class="m">${dshort(x.date)}${x.dup ? ` · <span style="color:var(--warn)">${x.dup === "var" ? "zaten eklendi" : x.dup === "önce" ? `başlangıç bakiyesinden (${dshort(acc(imp.accountId)?.openingDate)}) önce: bakiyede zaten var` : x.dup === "ücret" ? "taksit ücret satırı alışveriş tutarıyla okunmuş: eklenmez" : x.dup === "kart" ? "kart ödemesi: gelir değil, bankadan karta transfer olarak gir" : x.dup === "taksit" ? `${x.instPart.k}/${x.instPart.n}. taksit: alışveriş zaten kayıtlı` : x.dup === "elle" ? `elle girdiğin ${money(x.manAmt)} kaydın yerine geçer` : x.dup === "elle?" ? `elle girdiğin ${money(x.manAmt)} (${esc(x.manCat)}) kaydınla aynı olabilir` : "olası tekrar"}</span>` : ""}${x.inst ? ` · <span class="pill acc">${x.inst} taksit · aylık ${money(x.instPer)}</span> <span class="muted">(ekstrede ${x.instPart.k}/${x.inst}. taksit)</span>` : ""}${x.contactId ? ` · ${esc(con(x.contactId)?.name || "")}` : ""}</div>
           ${x.trade && imp.tradeAcc ? `<span class="pill acc" style="margin-top:4px;display:inline-block">⇄ ${x.amount > 0 ? "←" : "→"} ${esc(accName(acc(imp.tradeAcc)) || "")}</span>` : `<select class="imp-cat" data-i="${i}" style="margin-top:4px;padding:4px 6px;font-size:.82rem;width:auto;max-width:100%">${impCatOptions(x.type, x.cat)}</select>`}</div>
         <div class="amt ${x.amount > 0 ? "pos" : "neg"}" style="font-size:.92rem;text-align:right">${imp.ocr && !x.trade ? `<input class="imp-amt num ${x.amount > 0 ? "pos" : "neg"}" data-i="${i}" inputmode="decimal" value="${x.amount > 0 ? "+" : "−"}${nf2.format(x.amt)}" aria-label="Tutar" style="width:118px;text-align:right;padding:4px 6px;font-size:.9rem${x.edited ? ";border-color:var(--accent)" : ""}">` : `${x.amount > 0 ? "+" : "−"}${fmtAsset(x.amt, IC)}`}${IC !== "TRY" ? `<div class="muted" style="font-size:.74rem;font-weight:400">${x.tl ? money(x.tl) : "≈ " + money(x.amt * (rateOf(IC) || 0))}${x.est ? " · kurla" : ""}</div>` : ""}</div></div>`).join("")}
     </div>${items.length > 600 ? `<p class="small-note">İlk 600 satır gösteriliyor; hepsi eklenecek.</p>` : ""}` : ""}
@@ -2593,6 +2627,7 @@ document.addEventListener("click", async e => {
   if (d.fav) { const a = acc(d.fav); if (!a) return; put("accounts", { ...a, fav: !a.fav }); toast(a.fav ? `${a.name} favorilerden çıktı` : `⭐ ${a.name} favorilere eklendi`); return; }
   if (d.openAccount) { if (!acc(d.openAccount)) return; ui.tab = "hesaplar"; ls.set("kd-tab", "hesaplar"); ui.accView = d.openAccount; ui.accQ = ""; ui.accType = ""; closeSheet(); render(); window.scrollTo({ top: 0 }); return; }
   if (d.accPer) { ui.accPer = d.accPer; return render(); }
+  if (d.rs) { el.parentNode.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", b === el)); document.querySelectorAll(".rs-bal").forEach(i => { const a = acc(i.dataset.id); i.value = d.rs === "zero" ? "0" : amtStr(Math.round(balanceOf(a) * 100) / 100) || "0"; }); return; }
   if (d.cardPay) { const a = acc(d.cardPay); if (a) cardPayForm(a); return; }
   if (d.payamt) { $("#f-amount").value = amtStr(+d.payamt); el.parentNode.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", b === el)); return; }
   if (d.accType != null && el.closest("#accDetail")) { ui.accType = d.accType; return render(); }
@@ -2674,6 +2709,8 @@ document.addEventListener("click", async e => {
   if (a === "bill-new") return billForm();
   if (a === "notif") return enableNotifications();
   if (a === "notif-test") return testNotification();
+  if (a === "reset") { if (!S.txns.length) { toast("Silinecek işlem yok."); return; } return resetForm(); }
+  if (a === "reset-go") { el.disabled = true; await resetTxns(); el.disabled = false; return; }
   if (a === "sms") return smsPanel(SMSP && SMSP.items.some(x => !x.bad && x.sel) ? undefined : "");
   if (a === "sms-read") return smsPanel($("#sms-text").value);
   if (a === "sms-commit") { el.disabled = true; const n = await smsCommit(SMSP.items); SMSP = null; closeSheet(); return; }
