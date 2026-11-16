@@ -130,6 +130,9 @@ Sağ alttaki **💬** düğmesi. Örnekler: "Marketten 200 TL alışveriş", "D�
 - **Öğrenir**: asistanla eklenen bir kaydın kategorisini/hesabını sonradan değiştirirsen, aynı kelimeler bir dahaki sefere o kategoriye/hesaba gider.
 - **Yerleşik** çözümleyici ücretsizdir ve internetsiz çalışır (`assistant.js`). İsteğe bağlı **yapay zekâ**: ⚙ → Gemini ya da Claude API anahtarı. Yalnızca yerleşik anlayamadığında devreye girer; gönderilen yalnızca mesaj ve hesap/kategori/cari **adlarıdır** (bakiye ve işlem geçmişi gönderilmez). Anahtar yalnızca o cihazda saklanır.
 
+## İşlemleri toplu silme
+**İşlemler → ☑ Seç / sil**: satırlara dokunarak tek tek seç, ya da **Listelenen … kaydın tümünü seç** (arama/tür/hesap filtresine uyanların hepsi). **🗑 Seçilenleri sil** önce onay ister. 20'den çok kayıt ya da tüm işlemler silinirken **SİL** yazmak gerekir ve silmeden önce otomatik yedek dosyası iner. Hesap bakiyeleri kalan işlemlere göre yeniden hesaplanır. (Hesapları sıfırdan başlatmak için Hesaplar → Sıfırla.)
+
 ## Mobil görünüm
 Telefonda ve dokunmatik tablette otomatik açılır: tek sütun, alttaki simgeli sekme çubuğu, sağ altta yuvarlak **+** (yeni kayıt) düğmesi, aşağıdan açılan pencereler. Sağ üstteki hesabım menüsünden **📱 Mobil görünüm** ile elle açılıp kapatılır (seçim cihazda hatırlanır). **Yazı boyutu** (Normal / Büyük / Çok büyük) aynı menüden seçilir; tablette varsayılan Çok büyük. Tam ekran (APK gibi) için tarayıcı menüsünden **Uygulamayı yükle / Ana ekrana ekle**. Geniş ekranda (yatay tablet, bilgisayar) ana menüler altta, seçili menünün **ara menüleri solda** listelenir: Özet/Raporlar'da bölümler, İşlemler'de tür ve hesap filtreleri, Hesaplar'da favoriler, kredi kartları, gruplar ve hesaplar, Vadeler'de bekleyen/tamamlanan, Giderler'de sabit giderler ve kart ödemeleri, Cariler'de cari listesi. Hesabım menüsünden kapatılabilir.
 

@@ -112,7 +112,7 @@ let S = emptyState();
 let mode = "loading"; // loading | demo | signedout | live | empty
 let fb = null, db = null, auth = null, user = null, meta = {};
 const unsubs = [];
-const ui = { tab: new URLSearchParams(location.search).get("tab") || ls.get("kd-tab") || "ozet", q: "", ftype: "", facc: "", planView: "bekliyor", priv: ls.get("kd-priv") === "1", period: ls.get("kd-repper") || "30-gun", anScope: ls.get("kd-anscope") || "all", anSel: (() => { try { return JSON.parse(ls.get("kd-ansel") || "[]"); } catch (e) { return []; } })(), anPeriod: ls.get("kd-anper") || "", accView: null, accPer: "30-gun", accQ: "", accType: "" };
+const ui = { tab: new URLSearchParams(location.search).get("tab") || ls.get("kd-tab") || "ozet", q: "", ftype: "", facc: "", planView: "bekliyor", priv: ls.get("kd-priv") === "1", period: ls.get("kd-repper") || "30-gun", anScope: ls.get("kd-anscope") || "all", anSel: (() => { try { return JSON.parse(ls.get("kd-ansel") || "[]"); } catch (e) { return []; } })(), anPeriod: ls.get("kd-anper") || "", accView: null, accPer: "30-gun", accQ: "", accType: "", selMode: false, sel: new Set() };
 
 const acc = id => S.accounts.find(a => a.id === id);
 const con = id => S.contacts.find(c => c.id === id);
@@ -976,11 +976,17 @@ function txLabel(t) {
   if (t.type === "transfer") { const a = acc(t.accountId), b = acc(t.toAccountId); return `${a ? accName(a) : "?"} → ${b ? accName(b) : "?"}`; }
   const c = con(t.contactId); return c ? c.name : (t.note || t.category);
 }
-function viewIslemler() {
+function islemRows() {
   const q = ui.q.toLocaleLowerCase("tr");
   let rows = S.txns.filter(t => (!ui.ftype || t.type === ui.ftype) && (!ui.facc || (ui.facc.startsWith("g:") ? [t.accountId, t.toAccountId].some(id => id && acc(id) && groupOf(acc(id)) === ui.facc.slice(2)) : (t.accountId === ui.facc || t.toAccountId === ui.facc))));
   if (q) rows = rows.filter(t => [catLabel(t), t.note, txLabel(t), String(t.amount)].join(" ").toLocaleLowerCase("tr").includes(q));
   rows.sort((a, b) => a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
+  return rows;
+}
+function viewIslemler() {
+  const rows = islemRows(), SEL = ui.selMode;
+  if (SEL) { const ok = new Set(S.txns.map(t => t.id)); ui.sel.forEach(id => { if (!ok.has(id)) ui.sel.delete(id); }); }
+  const nSel = rows.filter(t => ui.sel.has(t.id)).length;
   const inc = sum(rows.filter(t => t.type === "gelir" && !isMove(t)), txTRY), exp = sum(rows.filter(t => t.type === "gider" && !isMove(t)), txTRY);
   let h = "", cur = "";
   for (const t of rows.slice(0, 300)) {
@@ -990,17 +996,41 @@ function viewIslemler() {
       h += `<div class="dhead"><span>${mfmtL.format(pd(m + "-01"))}</span><span class="num ${net < 0 ? "neg" : "pos"}">${signed(net)}</span></div>`;
     }
     const a = acc(t.accountId), sg = t.type === "gelir" ? 1 : t.type === "gider" ? -1 : 0;
-    h += `<div class="row click" data-edit-txn="${esc(t.id)}"><div><div class="t">${esc(txLabel(t))}</div>
+    const on = SEL && ui.sel.has(t.id);
+    h += `<div class="row click${on ? " picked" : ""}" ${SEL ? `data-sel-txn="${esc(t.id)}" role="checkbox" aria-checked="${on}"` : `data-edit-txn="${esc(t.id)}"`}>${SEL ? `<span class="selbox${on ? " on" : ""}" aria-hidden="true">${on ? "✓" : ""}</span>` : ""}<div style="flex:1;min-width:0"><div class="t">${esc(txLabel(t))}</div>
       <div class="m">${dshort(t.date)} · ${esc(catLabel(t))}${t.fx ? ` · <span class="pill acc">${esc(fmtAsset(t.fx.amt, t.fx.cur))}</span>` : ""}${instN(t) ? ` · <span class="pill acc">${instN(t)} taksit · aylık ${money0(t.amount / instN(t))}</span>` : ""}${t.type !== "transfer" && a ? " · " + esc(accName(a)) : ""}${t.note && con(t.contactId) ? " · " + esc(t.note) : ""}</div></div>
       <div class="amt ${sg > 0 ? "pos" : sg < 0 ? "neg" : "muted"}">${sg > 0 ? "+" : sg < 0 ? "−" : "⇄ "}${fmtAsset(t.amount, txAsset(t))}${t.type === "transfer" && t.toAmount != null && accAsset(acc(t.toAccountId)) !== txAsset(t) ? `<div class="muted" style="font-size:.78rem">→ ${fmtAsset(t.toAmount, accAsset(acc(t.toAccountId)))}</div>` : txAsset(t) !== "TRY" && t.type !== "transfer" ? `<div class="muted" style="font-size:.78rem">≈ ${money(txTRY(t))}</div>` : ""}</div></div>`;
   }
   return `<section class="panel"><div class="ph"><div><h2>İşlemler</h2><p>${rows.length} kayıt · <span class="pos">${money(inc)}</span> gelir · <span class="neg">${money(exp)}</span> gider</p></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="import-stmt">⇣ Ekstre içe aktar</button><button class="btn" data-act="sms">📩 SMS</button>${S.txns.some(t => t.importKey) ? `<button class="btn" data-act="imports">Yüklenen ekstreler</button>` : ""}<button class="btn primary" data-act="new-txn">+ İşlem</button></div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-act="import-stmt">⇣ Ekstre içe aktar</button><button class="btn" data-act="sms">📩 SMS</button>${S.txns.some(t => t.importKey) ? `<button class="btn" data-act="imports">Yüklenen ekstreler</button>` : ""}${rows.length ? `<button class="btn${SEL ? " primary" : ""}" data-act="sel-mode" aria-pressed="${!!SEL}">${SEL ? "✓ Seçim açık" : "☑ Seç / sil"}</button>` : ""}<button class="btn primary" data-act="new-txn">+ İşlem</button></div></div>
+    ${SEL ? `<div class="selbar"><b>${nSel} seçili</b><span class="muted" style="font-size:.85rem">${ui.q || ui.ftype || ui.facc ? "(filtreye uyan " + rows.length + " kayıttan)" : "(" + rows.length + " kayıttan)"}</span><span style="flex:1"></span>
+      <button class="btn small" data-act="sel-all">Listelenen ${rows.length} kaydın tümünü seç</button>${nSel ? `<button class="btn small" data-act="sel-none">Temizle</button>` : ""}
+      <button class="btn small danger" data-act="sel-del" ${nSel ? "" : "disabled"}>🗑 Seçilenleri sil${nSel ? " (" + nSel + ")" : ""}</button><button class="btn small ghost" data-act="sel-mode">Bitti</button></div>` : ""}
     ${otherTxs().length >= 3 ? `<div class="notice warn" style="margin:0 0 10px"><span><b>${otherTxs().length} işlem "Diğer" kategorisinde.</b> Ekstre açıklamalarından kategorileri yeniden tahmin edebilirim.</span><button class="btn small primary" data-act="recat">Otomatik kategorilendir</button></div>` : ""}
     <div class="filters"><input id="fq" type="search" placeholder="Ara: kategori, cari, not, tutar" value="${esc(ui.q)}" aria-label="İşlemlerde ara">
     <select id="ftype" aria-label="Tür"><option value="">Tüm türler</option>${["gelir", "gider", "transfer"].map(x => `<option value="${x}" ${ui.ftype === x ? "selected" : ""}>${x[0].toLocaleUpperCase("tr") + x.slice(1)}</option>`).join("")}</select>
     <select id="facc" aria-label="Hesap"><option value="">Tüm hesaplar</option>${accountGroups().map(g => `<optgroup label="${esc(g.name)}"><option value="g:${esc(g.name)}" ${ui.facc === "g:" + g.name ? "selected" : ""}>${esc(g.name)} · tümü</option>${g.list.map(a => `<option value="${esc(a.id)}" ${ui.facc === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</optgroup>`).join("")}</select></div>
-    <div class="list">${h || `<p class="muted" style="padding:14px 4px">Eşleşen işlem yok.</p>`}</div></section>`;
+    <div class="list">${h || `<p class="muted" style="padding:14px 4px">Eşleşen işlem yok.</p>`}${rows.length > 300 ? `<p class="muted" style="padding:10px 4px;font-size:.85rem">İlk 300 kayıt gösteriliyor${SEL ? "; “tümünü seç” gizli olanları da kapsar" : ""}.</p>` : ""}</div></section>`;
+}
+function selDelForm() {
+  const list = islemRows().filter(t => ui.sel.has(t.id)); if (!list.length) return toast("Önce işlem seç.");
+  const big = list.length >= 20 || list.length === S.txns.length, all = list.length === S.txns.length;
+  const inc = sum(list.filter(t => t.type === "gelir" && !isMove(t)), txTRY), exp = sum(list.filter(t => t.type === "gider" && !isMove(t)), txTRY);
+  openSheet(all ? "Tüm işlemleri sil" : "Seçilen işlemleri sil", `<div class="form" id="selDel">
+    <p style="margin:0"><b>${list.length} işlem</b> silinecek${all ? " (<b>tüm işlemler</b>)" : ""}: <span class="pos">${money(inc)}</span> gelir · <span class="neg">${money(exp)}</span> gider.</p>
+    <p class="small-note" style="margin:0">Hesap bakiyeleri bu işlemler çıkınca yeniden hesaplanır (açılış bakiyeleri aynı kalır). Bu işlem geri alınamaz${big ? "; güvenlik için silmeden önce yedek dosyası indirilir" : ""}.</p>
+    ${big ? `<label>Onaylamak için <b>SİL</b> yaz<input id="sd-confirm" autocomplete="off" placeholder="SİL"></label>` : ""}
+    <div class="foot"><span></span><div class="r"><button type="button" class="btn" data-close>Vazgeç</button><button type="button" class="btn danger" data-act="sel-del-ok">🗑 ${list.length} işlemi sil</button></div></div></div>`);
+}
+async function selDelApply() {
+  const list = islemRows().filter(t => ui.sel.has(t.id)); if (!list.length) return closeSheet();
+  const big = list.length >= 20 || list.length === S.txns.length;
+  if (big && ($("#sd-confirm").value || "").trim().toLocaleUpperCase("tr") !== "SİL" && ($("#sd-confirm").value || "").trim().toLocaleUpperCase("en") !== "SIL") { toast("Onay için SİL yaz."); $("#sd-confirm").focus(); return; }
+  if (big) saveFile(`kasa-defteri-yedek-${TODAY}-silme-oncesi.json`, JSON.stringify(snapshotData(), null, 1), "application/json");
+  const ids = new Set(list.map(t => t.id)), msg = `${list.length} işlem silindi`;
+  if (live()) { const ok = await safe(() => batchWrite(list.map(t => ({ type: "delete", col: "txns", id: t.id }))), msg); if (!ok) return; Drive.dirty(); }
+  else { S.txns = S.txns.filter(t => !ids.has(t.id)); saveDemo(); toast(msg); }
+  ui.sel = new Set(); ui.selMode = false; closeSheet(); render();
 }
 
 /* --- Vadeler --- */
@@ -2691,7 +2721,7 @@ window.addEventListener("offline", renderChips);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && iso(new Date()) !== TODAY) render(); });
 
 document.addEventListener("click", async e => {
-  const el = e.target.closest("button,[data-edit-txn],[data-edit-plan],[data-edit-account],[data-open-account],[data-an-scope],[data-rep-scope],[data-show-contact],[data-batch],[data-bill-edit],[data-side-sec],[data-side-ftype],[data-side-facc],.overlay");
+  const el = e.target.closest("button,[data-edit-txn],[data-sel-txn],[data-edit-plan],[data-edit-account],[data-open-account],[data-an-scope],[data-rep-scope],[data-show-contact],[data-batch],[data-bill-edit],[data-side-sec],[data-side-ftype],[data-side-facc],.overlay");
   if (!el) return;
   if (el.id === "ov" && e.target === el) return closeSheet();
   const d = el.dataset;
@@ -2720,6 +2750,7 @@ document.addEventListener("click", async e => {
   if (d.period) { ui.period = d.period; ls.set("kd-repper", d.period); return render(); }
   if (d.repScope) { setScope(d.repScope); return render(); }
   if (d.complete) { const p = S.plans.find(x => x.id === d.complete); if (p) completeForm(p); return; }
+  if (d.selTxn) { ui.sel.has(d.selTxn) ? ui.sel.delete(d.selTxn) : ui.sel.add(d.selTxn); const y = window.scrollY; render(); window.scrollTo({ top: y }); return; }
   if (d.editTxn) { const t = S.txns.find(x => x.id === d.editTxn); if (t) txnForm(t); return; }
   if (d.editPlan) { const p = S.plans.find(x => x.id === d.editPlan); if (p) planForm(p); return; }
   if (d.editAccount) { const a = acc(d.editAccount); if (a) accountForm(a); return; }
@@ -2780,6 +2811,11 @@ document.addEventListener("click", async e => {
   if (a === "rates-save") return saveManualRates();
   if (a === "rates-refresh") { el.disabled = true; return fetchRates(true); }
   if (a === "rates-all") { ui.ratesAll = !ui.ratesAll; return ratesPanel(); }
+  if (a === "sel-mode") { ui.selMode = !ui.selMode; ui.sel = new Set(); return render(); }
+  if (a === "sel-all") { islemRows().forEach(t => ui.sel.add(t.id)); return render(); }
+  if (a === "sel-none") { ui.sel = new Set(); return render(); }
+  if (a === "sel-del") return selDelForm();
+  if (a === "sel-del-ok") return selDelApply();
   if (a === "import-stmt") return openImport(el.dataset.acc || (imp && imp.accountId));
   if (a === "data-check") return dataCheckPanel();
   if (a === "bill-new") return billForm();

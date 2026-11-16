@@ -254,3 +254,10 @@ html.mobile .as-panel{left:0;right:0;bottom:0;margin:0 auto;width:min(600px,calc
 .as-dots{display:inline-flex;gap:4px}.as-dots i{width:7px;height:7px;border-radius:50%;background:var(--muted);animation:asd 1s infinite}.as-dots i:nth-child(2){animation-delay:.15s}.as-dots i:nth-child(3){animation-delay:.3s}
 @keyframes asd{0%,80%,100%{opacity:.25}40%{opacity:1}}
 .as-card .small-note{margin:0}
+
+/* işlemlerde çoklu seçim */
+.selbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;position:sticky;top:0;z-index:5;background:var(--surface);border:1px solid var(--accent);border-radius:12px;padding:8px 10px;margin:0 0 10px}
+.row.picked{background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.row .selbox{flex:none;width:22px;height:22px;border:2px solid var(--line);border-radius:6px;display:grid;place-items:center;font-size:.85rem;font-weight:700;margin-right:10px;color:var(--accent-ink);background:var(--surface)}
+.row .selbox.on{background:var(--accent);border-color:var(--accent)}
+.row:has(>.selbox){grid-template-columns:auto minmax(0,1fr) auto}.row .selbox{margin-right:0}
