@@ -150,6 +150,9 @@ Kartta (Hesaplar, hesap detayı, Özet'teki kart, Giderler → Kredi kartı öde
 ## Döviz ile gelir/gider
 Yeni işlemde tutarın yanındaki para biriminden **USD, EUR, GBP, CHF, SAR** seçilebilir (ör. TL kredi kartından ödenen 20 USD'lik abonelik). Hesaptan, güncel kurla hesaplanan TL tutarı düşer; bankanın çektiği gerçek TL tutarı **Hesaptan düşen** alanına yazılırsa o kullanılır. Döviz tutarı ve kur işlemde saklanır, listede `$20,00` olarak görünür.
 
+## Kartı bankayla eşitle
+Kart ayrıntısında **🏦 Bankayla eşitle**: mobil bankacılıktaki toplam limit, kullanılabilir limit, dönem içi harcamalar ve gelecek taksitler toplamını gir. Toplam borç = limit − kullanılabilir; kalan fark "önceki dönem/ekstre borcu" olarak gösterilir. Sonraki işlemler bu rakamların üstüne eklenir; arada fark oluşursa tekrar eşitle.
+
 ## Kredi kartı özeti
 Kart hesabını düzenle (veya ekstre içe aktarırken) şu dört alanı bankanın uygulamasından bakarak doldur: **Toplam limit**, **Kullanılabilir limit**, **Dönem içi harcamalar**, **Hesap kesim günü**.
 Özet ve Hesaplar ekranında banka uygulamasındaki gibi görünür: kullanılabilir limit, dönem içi harcamalar, toplam borç, önceki dönem/taksit farkı ve dönem tarihleri. Sonra eklediğin harcamalar iki rakama da otomatik yansır; kesim gününde dönem harcaması sıfırlanır.

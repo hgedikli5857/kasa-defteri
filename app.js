@@ -1203,7 +1203,28 @@ function cardSummaryHtml(a) {
     </div>
     ${C.pct >= 0.8 ? `<div class="neg" style="font-size:.78rem">Limitin %${Math.round(C.pct * 100)} kadarı dolu</div>` : ""}
     ${!a.cutDay ? `<div class="muted" style="font-size:.74rem">Hesap kesim günü girilmedi; dönem ay başından sayılıyor.</div>` : ""}
-    ${a.limitSyncAt ? `<div class="muted" style="font-size:.74rem">Bankayla eşitlendi: ${tfmt.format(new Date(a.limitSyncAt))}</div>` : ""}</div>`;
+    ${a.limitSyncAt ? `<div class="muted" style="font-size:.74rem">Bankayla eşitlendi: ${tfmt.format(new Date(a.limitSyncAt))}</div>` : ""}
+    <button type="button" class="btn small" data-card-sync="${esc(a.id)}" style="justify-self:start">🏦 Bankayla eşitle</button></div>`;
+}
+// Mobil bankacılıktaki 4 değeri gir → kart özeti bankayla birebir aynı olsun
+function cardSyncForm(a) {
+  const C = cardSummary(a) || { lim: +a.limit || 0, avail: 0, spent: 0, future: 0 };
+  openSheet(`${accName(a)} · bankayla eşitle`, `<form class="form" id="frm" data-kind="cardsync" data-id="${esc(a.id)}">
+    <p class="small-note" style="margin:0">Mobil bankacılıktaki kart ekranında yazan rakamları gir. Uygulama borcu, dönem içi harcamaları ve gelecek taksitleri buna göre ayarlar; bundan sonraki işlemler üstüne eklenir.</p>
+    <div class="f2"><label>Toplam limit (₺)<input id="f-limit" inputmode="decimal" value="${amtStr(C.lim)}"></label>
+      <label>Kullanılabilir limit (₺)<input id="f-avail" inputmode="decimal" value="${a.limitSyncAt || C.avail ? amtStr(Math.round(C.avail * 100) / 100) : ""}" placeholder="Örn. 62.207,26"></label></div>
+    <div class="f2"><label>Dönem içi harcamalar (₺)<input id="f-spent" inputmode="decimal" value="${amtStr(C.spent)}" placeholder="Örn. 21.493,24"></label>
+      <label>Gelecek taksitler toplamı (₺)<input id="f-futinst" inputmode="decimal" value="${amtStr(C.future)}" placeholder="Örn. 6.009,83"></label></div>
+    <div id="cs-prev" class="small-note" style="margin:0;border:1px solid var(--line);border-radius:10px;padding:10px"></div>
+    <div class="foot"><span></span><div class="r"><button type="button" class="btn" data-close>Vazgeç</button><button class="btn primary">Eşitle</button></div></div></form>`);
+  csPreview();
+}
+function csPreview() {
+  const el = $("#cs-prev"); if (!el) return;
+  const L = parseAmt($("#f-limit").value), A = parseAmt($("#f-avail").value), SP = parseAmt($("#f-spent").value) || 0, FU = parseAmt($("#f-futinst").value) || 0;
+  if (!(L > 0) || !($("#f-avail").value) || !(A >= 0)) { el.innerHTML = "Kullanılabilir limiti yaz; borç hemen hesaplanır."; return; }
+  const debt = Math.round((L - A) * 100) / 100, prev = Math.round((debt - SP - FU) * 100) / 100;
+  el.innerHTML = `Toplam borç: <b>${money(debt)}</b> = önceki dönem/ekstre <b class="${prev < -0.5 ? "neg" : ""}">${money(prev)}</b> + dönem içi <b>${money(SP)}</b> + gelecek taksitler <b>${money(FU)}</b>${prev < -0.5 ? `<br><span class="neg">Dönem içi + taksit, toplam borçtan büyük görünüyor; rakamları kontrol et.</span>` : ""}`;
 }
 function instListHtml(a) {
   const C = cardSummary(a), end = C ? C.end : TODAY;
@@ -2648,6 +2669,13 @@ function submitForm(f) {
     if (!o.name) { toast("Ad gir."); return; }
     const i = arr.findIndex(x => x.id === o.id); if (i >= 0) arr[i] = o; else arr.push(o);
     saveBills(arr); toast(id ? "Güncellendi" : `${o.name} eklendi`); closeSheet(); return;
+  } else if (kind === "cardsync") {
+    const card = acc(id), L = parseAmt(v("#f-limit")), A = parseAmt(v("#f-avail")), SP = parseAmt(v("#f-spent")), FU = parseAmt(v("#f-futinst"));
+    if (!card) return; if (!(L > 0)) { toast("Toplam limiti yaz."); return; } if (!(A >= 0) || !v("#f-avail")) { toast("Kullanılabilir limiti yaz."); return; } if (A > L) { toast("Kullanılabilir limit toplam limitten büyük olamaz."); return; }
+    const o = { ...card, limit: L, ...creditAnchor(card.id, L, A) };
+    if (v("#f-spent") !== "" && SP >= 0) Object.assign(o, spentAnchor(card.id), { syncSpent: SP }); else for (const k of ["syncSpent", "spentDate", "spentIds"]) delete o[k];
+    if (v("#f-futinst") !== "" && FU >= 0) { o.futInst = FU; o.futInstDate = TODAY; } else { delete o.futInst; delete o.futInstDate; }
+    put("accounts", o); toast(`${accName(card)} bankayla eşitlendi · borç ${money(L - A)}`); closeSheet(); return;
   } else if (kind === "cardpay") {
     const card = acc(id), from = v("#f-from"), amount = parseAmt(v("#f-amount"));
     if (!card || !acc(from)) { toast("Hesap seç."); return; }
@@ -2734,6 +2762,7 @@ document.addEventListener("click", async e => {
   if (d.accPer) { ui.accPer = d.accPer; return render(); }
   if (d.zoom) { ls.set("kd-zoom", d.zoom); applyMobile(); el.parentNode.querySelectorAll("[data-zoom]").forEach(b => b.setAttribute("aria-pressed", b === el)); return; }
   if (d.rs) { el.parentNode.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", b === el)); document.querySelectorAll(".rs-bal").forEach(i => { const a = acc(i.dataset.id); i.value = d.rs === "zero" || (d.rs === "cards" && isCredit(a)) ? "0" : amtStr(Math.round(balanceOf(a) * 100) / 100) || "0"; }); return; }
+  if (d.cardSync) { const a = acc(d.cardSync); if (a) cardSyncForm(a); return; }
   if (d.cardPay) { const a = acc(d.cardPay); if (a) cardPayForm(a); return; }
   if (d.payamt) { $("#f-amount").value = amtStr(+d.payamt); el.parentNode.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", b === el)); return; }
   if (d.accType != null && el.closest("#accDetail")) { ui.accType = d.accType; return render(); }
@@ -2887,6 +2916,7 @@ document.addEventListener("input", e => {
   }
   if (["f-amount", "f-rate", "f-toamt", "f-inst", "f-fxrate", "f-fxacc"].includes(e.target.id) && $("#frm")?.dataset.kind === "txn") updateTxnUnits();
   if (e.target.id === "f-open") updateOpenConv();
+  if (["f-limit", "f-avail", "f-spent", "f-futinst"].includes(e.target.id) && $("#cs-prev")) return csPreview();
   if (["f-limit", "f-avail"].includes(e.target.id)) { const L = parseAmt($("#f-limit").value), A = parseAmt($("#f-avail").value), h = $("#f-avail-hint"); if (L > 0 && A >= 0 && $("#f-avail").value) h.innerHTML = `Kaydedince kart borcu <b>${money(L - A)}</b> olarak ayarlanacak (limitin %${Math.round((L - A) / L * 100)} kadarı kullanılmış).`; }
   if (e.target.id === "fq") { ui.q = e.target.value; ui._focusQ = true; render(); }
   if (e.target.id === "accq") { ui.accQ = e.target.value; ui._focusAq = true; render(); } });
