@@ -1197,7 +1197,7 @@ function cardSummaryHtml(a) {
           <span>· ${known ? "Ekstre borcu" + (D.paid >= 0.01 ? " (kalan)" : "") : fut >= 0.01 ? "Önceki dönem borcu" : "Önceki dönem / taksit"}</span><b class="num">${money(st)}</b>
           <span>· Dönem içi harcamalar</span><b class="num">${money(C.spent)}</b>
           ${fut >= 0.01 || known ? `<span>· Gelecek dönem taksitleri${C.instAct && !C.futManual && !known ? ` (${C.instAct} alışveriş)` : ""}</span><b class="num">${money(fut)}</b>` : ""}
-          ${Math.abs(other) >= 0.5 ? `<span>· Fark (faiz, ücret, yuvarlama)</span><b class="num">${money(other)}</b>` : ""}`; })()}
+          ${Math.abs(other) >= 0.5 ? `<span>· Fark (provizyon, faiz, ücret, yuvarlama)</span><b class="num">${money(other)}</b>` : ""}`; })()}
       <span>Toplam limit</span><b class="num">${money(C.lim)}</b>
       <span>Dönem</span><b>${dshort(C.start)} – ${C.nextCut ? dshort(C.nextCut) + " (kesim)" : "bugün"}</b>
     </div>
@@ -1215,6 +1215,7 @@ function cardSyncForm(a) {
       <label>Kullanılabilir limit (₺)<input id="f-avail" inputmode="decimal" value="${a.limitSyncAt || C.avail ? amtStr(Math.round(C.avail * 100) / 100) : ""}" placeholder="Örn. 62.207,26"></label></div>
     <div class="f2"><label>Dönem içi harcamalar (₺)<input id="f-spent" inputmode="decimal" value="${amtStr(C.spent)}" placeholder="Örn. 21.493,24"></label>
       <label>Gelecek taksitler toplamı (₺)<input id="f-futinst" inputmode="decimal" value="${amtStr(C.future)}" placeholder="Örn. 6.009,83"></label></div>
+    <label>Önceki dönem (ekstre) borcu (₺) <span class="muted" style="font-weight:400">(ödenmemiş ekstre yoksa 0)</span><input id="f-stmt" inputmode="decimal" value="${a.stmtDate ? amtStr(+a.stmtDebt || 0) || "0" : "0"}"></label>
     <div id="cs-prev" class="small-note" style="margin:0;border:1px solid var(--line);border-radius:10px;padding:10px"></div>
     <div class="foot"><span></span><div class="r"><button type="button" class="btn" data-close>Vazgeç</button><button class="btn primary">Eşitle</button></div></div></form>`);
   csPreview();
@@ -1223,8 +1224,8 @@ function csPreview() {
   const el = $("#cs-prev"); if (!el) return;
   const L = parseAmt($("#f-limit").value), A = parseAmt($("#f-avail").value), SP = parseAmt($("#f-spent").value) || 0, FU = parseAmt($("#f-futinst").value) || 0;
   if (!(L > 0) || !($("#f-avail").value) || !(A >= 0)) { el.innerHTML = "Kullanılabilir limiti yaz; borç hemen hesaplanır."; return; }
-  const debt = Math.round((L - A) * 100) / 100, prev = Math.round((debt - SP - FU) * 100) / 100;
-  el.innerHTML = `Toplam borç: <b>${money(debt)}</b> = önceki dönem/ekstre <b class="${prev < -0.5 ? "neg" : ""}">${money(prev)}</b> + dönem içi <b>${money(SP)}</b> + gelecek taksitler <b>${money(FU)}</b>${prev < -0.5 ? `<br><span class="neg">Dönem içi + taksit, toplam borçtan büyük görünüyor; rakamları kontrol et.</span>` : ""}`;
+  const debt = Math.round((L - A) * 100) / 100, ST = parseAmt($("#f-stmt")?.value) || 0, prev = Math.round((debt - SP - FU - ST) * 100) / 100;
+  el.innerHTML = `Toplam borç: <b>${money(debt)}</b> = ekstre <b>${money(ST)}</b> + dönem içi <b>${money(SP)}</b> + gelecek taksitler <b>${money(FU)}</b>${Math.abs(prev) >= 0.5 ? ` + <b class="${prev < 0 ? "neg" : ""}">${money(prev)}</b> <span class="muted">fark (provizyon, faiz, ücret olabilir)</span>` : ""}${prev < -0.5 ? `<br><span class="neg">Dönem içi + taksit, toplam borçtan büyük görünüyor; rakamları kontrol et.</span>` : ""}`;
 }
 function instListHtml(a) {
   const C = cardSummary(a), end = C ? C.end : TODAY;
@@ -2675,6 +2676,7 @@ function submitForm(f) {
     const o = { ...card, limit: L, ...creditAnchor(card.id, L, A) };
     if (v("#f-spent") !== "" && SP >= 0) Object.assign(o, spentAnchor(card.id), { syncSpent: SP }); else for (const k of ["syncSpent", "spentDate", "spentIds"]) delete o[k];
     if (v("#f-futinst") !== "" && FU >= 0) { o.futInst = FU; o.futInstDate = TODAY; } else { delete o.futInst; delete o.futInstDate; }
+    const ST = parseAmt(v("#f-stmt")); if (v("#f-stmt") !== "" && ST >= 0) { o.stmtDebt = ST; o.stmtDate = TODAY; o.minPay = ST * minRate(card); delete o.dueDate; }
     put("accounts", o); toast(`${accName(card)} bankayla eşitlendi · borç ${money(L - A)}`); closeSheet(); return;
   } else if (kind === "cardpay") {
     const card = acc(id), from = v("#f-from"), amount = parseAmt(v("#f-amount"));
@@ -2916,7 +2918,7 @@ document.addEventListener("input", e => {
   }
   if (["f-amount", "f-rate", "f-toamt", "f-inst", "f-fxrate", "f-fxacc"].includes(e.target.id) && $("#frm")?.dataset.kind === "txn") updateTxnUnits();
   if (e.target.id === "f-open") updateOpenConv();
-  if (["f-limit", "f-avail", "f-spent", "f-futinst"].includes(e.target.id) && $("#cs-prev")) return csPreview();
+  if (["f-limit", "f-avail", "f-spent", "f-futinst", "f-stmt"].includes(e.target.id) && $("#cs-prev")) return csPreview();
   if (["f-limit", "f-avail"].includes(e.target.id)) { const L = parseAmt($("#f-limit").value), A = parseAmt($("#f-avail").value), h = $("#f-avail-hint"); if (L > 0 && A >= 0 && $("#f-avail").value) h.innerHTML = `Kaydedince kart borcu <b>${money(L - A)}</b> olarak ayarlanacak (limitin %${Math.round((L - A) / L * 100)} kadarı kullanılmış).`; }
   if (e.target.id === "fq") { ui.q = e.target.value; ui._focusQ = true; render(); }
   if (e.target.id === "accq") { ui.accQ = e.target.value; ui._focusAq = true; render(); } });
