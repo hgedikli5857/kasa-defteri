@@ -2,6 +2,7 @@
 // Veri: Firebase Firestore (anlık senkron + çevrimdışı), giriş: Google (Firebase Auth), yedek: Google Drive (drive.file)
 import { firebaseConfig } from "./firebase-config.js";
 import * as IMP from "./importer.js";
+import * as AST from "./assistant.js";
 
 const FB = "https://www.gstatic.com/firebasejs/10.14.1/";
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
@@ -854,7 +855,7 @@ function render0() {
   const qi = $("#fq"); if (qi && ui._focusQ) { qi.focus(); qi.setSelectionRange(qi.value.length, qi.value.length); ui._focusQ = false; }
   if (live()) { clearTimeout(render._rt); render._rt = setTimeout(syncReminders, 3000); }
   if (PENDING_SMS != null && (mode === "live" || mode === "demo")) { const t = PENDING_SMS; PENDING_SMS = null; try { history.replaceState(null, "", location.pathname); } catch (e) { } setTimeout(() => smsPanel(t), 300); }
-  renderSide();
+  renderSide(); asRender();
   const aq = $("#accq"); if (aq && ui._focusAq) { aq.focus(); aq.setSelectionRange(aq.value.length, aq.value.length); ui._focusAq = false; }
 }
 function renderNotice() {
@@ -2935,3 +2936,302 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) { fe
 setInterval(() => { if (!document.hidden) gmailAutoImport(); }, 5 * 60e3);
 if (configured) renderLogin(); // Firebase yüklenirken giriş kartı (düğme pasif) görünür
 boot();
+
+/* ---------- Kasa Asistanı: yaz/söyle → onay kartı → kaydet ---------- */
+var AS = { open: false, log: [], drafts: {}, busy: false, rec: null }; // var: render() modül sonundan önce çağrılabilir
+try { AS.log = JSON.parse(ls.get("kd-asst-log") || "[]").slice(-40); } catch (e) { AS.log = []; }
+const asLogSave = () => { try { ls.set("kd-asst-log", JSON.stringify(AS.log.slice(-40).map(m => m.draft ? { ...m, html: m.done || "<i>Onay kartı (süresi doldu)</i>", draft: null } : m))); } catch (e) {} };
+const aiCfg = () => { try { const c = JSON.parse(ls.get("kd-ai") || "null"); return c && c.k ? c : null; } catch (e) { return null; } };
+const AI_MODELS = { gemini: "gemini-2.5-flash", claude: "claude-haiku-4-5" };
+const AS_EX = ["Marketten 200 TL alışveriş", "Dün kartla 450 TL benzin", "Bankomattan karta 5.000 aktardım", "Netflix 15 dolar", "Ayın 20'sinde 8.000 kira ödeyeceğim", "Bu ay markete ne kadar harcadım?", "Kart borcum ne kadar?", "Son kaydı sil"];
+
+function asCtx() {
+  return {
+    today: TODAY, lastAcc: ls.get("kd-last-acc") || "", lastBank: (payAccs()[0] || {}).id || "",
+    cats: catsObj(), learned: AST.learnFrom(S.txns),
+    accounts: S.accounts.filter(a => !a.hide || true).map(a => ({ id: a.id, name: a.name, group: groupOf(a), kind: a.kind, credit: isCredit(a), fav: !!a.fav, payFrom: a.payFrom || "", asset: accAsset(a) })),
+    contacts: S.contacts.map(c => ({ id: c.id, name: c.name })),
+    guess: (d, sg) => { const g = IMP.guessCategory(d.toLocaleUpperCase("tr"), sg, {}); return g; },
+  };
+}
+function asPush(who, html, draft) { const m = { who, html, id: uid8(), t: Date.now(), draft: draft || null }; AS.log.push(m); if (AS.log.length > 60) AS.log.splice(0, AS.log.length - 60); asLogSave(); asRender(); return m; }
+function asOpen() {
+  if (ui.priv) { toast("Veriler gizli. Göstermek için sağ üstteki göz simgesine dokun."); return; }
+  AS.open = true; if (!AS.log.length) asHello(); asRender(); setTimeout(() => $("#asIn")?.focus(), 50);
+}
+function asClose() { AS.open = false; asStopRec(); asRender(); }
+function asHello() {
+  asPush("bot", `Merhaba! Harcama, gelir, transfer ya da vade yaz; ben kaydı hazırlayayım, sen onayla. Sorular da sorabilirsin.<div class="as-chips">${AS_EX.map(x => `<button type="button" class="chip" data-as-ex="${esc(x)}">${esc(x)}</button>`).join("")}</div>`);
+}
+function asRender() {
+  if (!AS) return;
+  let r = $("#asstRoot"); if (!r) { r = document.createElement("div"); r.id = "asstRoot"; document.body.appendChild(r); }
+  const fab = $("#asstBtn"); if (fab) fab.hidden = AS.open || ui.priv || $("#appRoot").hidden;
+  if (!AS.open) { r.innerHTML = ""; return; }
+  const sr = !!(window.SpeechRecognition || window.webkitSpeechRecognition), ai = aiCfg();
+  const keep = $("#asIn")?.value || "";
+  r.innerHTML = `<div class="as-panel" role="dialog" aria-label="Kasa Asistanı">
+    <div class="as-head"><b>💬 Kasa Asistanı</b><span class="as-mode">${ai ? "Yerleşik + " + (ai.p === "claude" ? "Claude" : "Gemini") : "Yerleşik"}</span><span style="flex:1"></span>
+      <button type="button" class="btn ghost small" data-as="settings" title="Yapay zekâ ayarı" aria-label="Ayarlar">⚙</button>
+      <button type="button" class="btn ghost small" data-as="clear" title="Sohbeti temizle" aria-label="Temizle">🧹</button>
+      <button type="button" class="btn ghost small" data-as="close" aria-label="Kapat">✕</button></div>
+    <div class="as-log" id="asLog">${AS.log.map(m => `<div class="as-msg ${m.who}">${m.draft && AS.drafts[m.draft] ? asCard(m.draft) : m.html}</div>`).join("")}${AS.busy ? `<div class="as-msg bot"><span class="as-dots"><i></i><i></i><i></i></span></div>` : ""}</div>
+    <form class="as-in" id="asForm"><input id="asIn" autocomplete="off" enterkeyhint="send" placeholder="Örn. marketten 200 TL alışveriş" value="${esc(keep)}">
+      ${sr ? `<button type="button" class="btn ${AS.rec ? "danger" : ""}" data-as="mic" aria-label="Sesle yaz" title="Sesle yaz">${AS.rec ? "■" : "🎤"}</button>` : ""}
+      <button class="btn primary" aria-label="Gönder">➤</button></form></div>`;
+  const lg = $("#asLog"); if (lg) lg.scrollTop = lg.scrollHeight;
+}
+
+// ---- onay kartı
+function asCard(id) {
+  const d = AS.drafts[id]; if (!d) return "";
+  const A = (sel, name = "acc") => `<select data-f="${name}">${accOpts(sel)}</select>`;
+  if (d.kind === "txn") {
+    const fx = d.cur && d.cur !== accAsset(acc(d.accountId)) ;
+    const curSel = `<select data-f="cur">${["TRY", ...FX_CURS.filter(c => c !== "TRY")].map(c => `<option ${c === (d.cur || "TRY") ? "selected" : ""}>${c}</option>`).join("")}</select>`;
+    return `<div class="as-card" data-card="${id}"><div class="seg" role="group">${["gider", "gelir", "transfer"].map(x => `<button type="button" data-as-type="${x}" aria-pressed="${d.type === x}">${x[0].toLocaleUpperCase("tr") + x.slice(1)}</button>`).join("")}</div>
+      <div class="as-grid"><label>Tutar<span class="as-row"><input data-f="amount" inputmode="decimal" value="${amtStr(d.amount)}">${d.type !== "transfer" ? curSel : ""}</span></label>
+      <label>Tarih<input data-f="date" type="date" value="${esc(d.date)}"></label>
+      <label>${d.type === "transfer" ? "Çıkış hesabı" : "Hesap"}${A(d.accountId)}</label>
+      ${d.type === "transfer" ? `<label>Giriş hesabı${A(d.toAccountId, "to")}</label>` : `<label>Kategori<select data-f="cat">${catOptions(d.type, d.category).replace(/<option value="__new">.*?<\/option>/, "")}</select></label>
+      <label>Alt kategori<select data-f="sub">${subOptions(d.type, d.category, d.sub).replace(/<option value="__new">.*?<\/option>/, "")}</select></label>
+      <label>Cari<select data-f="con">${opt(S.contacts.map(c => [c.id, c.name]), d.contactId, "— yok —")}</select></label>`}
+      <label class="wide">Not<input data-f="note" value="${esc(d.note || "")}"></label></div>
+      ${fx ? `<p class="small-note">${esc(d.cur)} tutar, güncel kurla ${esc(accAsset(acc(d.accountId)))}'ye çevrilip kaydedilir (kur bilgisi saklanır).</p>` : ""}
+      ${d.accGuessed ? `<p class="small-note">Hesap belirtmedin; son kullandığını seçtim.</p>` : ""}
+      <div class="as-act"><button type="button" class="btn primary" data-as="ok" data-id="${id}">✓ Kaydet</button><button type="button" class="btn" data-as="form" data-id="${id}">✎ Formda aç</button><button type="button" class="btn ghost" data-as="cancel" data-id="${id}">✕ İptal</button></div></div>`;
+  }
+  if (d.kind === "plan") return `<div class="as-card" data-card="${id}"><div class="seg" role="group">${[["ödeme", "Ödeme (borç)"], ["tahsilat", "Tahsilat (alacak)"]].map(([v, l]) => `<button type="button" data-as-dir="${v}" aria-pressed="${d.dir === v}">${l}</button>`).join("")}</div>
+      <div class="as-grid"><label>Tutar (₺)<input data-f="amount" inputmode="decimal" value="${amtStr(d.amount)}"></label><label>Vade tarihi<input data-f="due" type="date" value="${esc(d.due || "")}" ${d.due ? "" : 'style="outline:2px solid var(--warn)"'}></label>
+      <label>Kategori<select data-f="cat">${catOptions(d.dir === "tahsilat" ? "gelir" : "gider", d.category).replace(/<option value="__new">.*?<\/option>/, "")}</select></label>
+      <label>Cari<select data-f="con">${opt(S.contacts.map(c => [c.id, c.name]), d.contactId, "— yok —")}</select></label>
+      <label class="wide">Not<input data-f="note" value="${esc(d.note || "")}"></label></div>
+      <p class="small-note">Vadeler'e eklenir; ${3} gün önce hatırlatılır.</p>
+      <div class="as-act"><button type="button" class="btn primary" data-as="ok" data-id="${id}">✓ Vadeye ekle</button><button type="button" class="btn ghost" data-as="cancel" data-id="${id}">✕ İptal</button></div></div>`;
+  if (d.kind === "del") { const t = S.txns.find(x => x.id === d.txnId); return t ? `<div class="as-card" data-card="${id}"><p style="margin:0 0 8px">Bu kayıt silinsin mi?</p>${asTxnLine(t)}<div class="as-act"><button type="button" class="btn danger" data-as="ok" data-id="${id}">🗑 Sil</button><button type="button" class="btn ghost" data-as="cancel" data-id="${id}">Vazgeç</button></div></div>` : "<i>Kayıt bulunamadı.</i>"; }
+  if (d.kind === "edit") { const t = S.txns.find(x => x.id === d.txnId); return t ? `<div class="as-card" data-card="${id}"><p style="margin:0 0 8px">Son kayıt güncellensin mi?</p>${asTxnLine(t)}<p style="margin:8px 0">→ <b>${esc(d.label)}</b></p><div class="as-act"><button type="button" class="btn primary" data-as="ok" data-id="${id}">✓ Uygula</button><button type="button" class="btn ghost" data-as="cancel" data-id="${id}">Vazgeç</button></div></div>` : "<i>Kayıt bulunamadı.</i>"; }
+  return "";
+}
+const asTxnLine = t => `<div class="as-line"><span>${t.type === "gelir" ? "🟢" : t.type === "transfer" ? "🔁" : "🔴"} <b>${esc(t.type === "transfer" ? `${accName(acc(t.accountId) || { name: "?" })} → ${accName(acc(t.toAccountId) || { name: "?" })}` : catLabel(t))}</b><br><small>${esc(dshort(t.date))} · ${esc(t.type === "transfer" ? "" : accName(acc(t.accountId) || { name: "?" }))}${t.note ? " · " + esc(t.note) : ""}</small></span><b class="num ${t.type === "gider" ? "neg" : t.type === "gelir" ? "pos" : ""}">${esc(t.fx ? fmtAsset(t.fx.amt, t.fx.cur) + " · " : "")}${esc(fmtAsset(t.amount, accAsset(acc(t.accountId))))}</b></div>`;
+
+function asReadCard(id) {
+  const d = AS.drafts[id], c = document.querySelector(`[data-card="${id}"]`); if (!d || !c) return d;
+  const g = n => c.querySelector(`[data-f="${n}"]`)?.value;
+  if (g("amount") != null) d.amount = parseAmt(g("amount"));
+  for (const [k, n] of [["date", "date"], ["due", "due"], ["accountId", "acc"], ["toAccountId", "to"], ["category", "cat"], ["sub", "sub"], ["contactId", "con"], ["note", "note"], ["cur", "cur"]]) { const v = g(n); if (v != null) d[k] = v; }
+  return d;
+}
+const lastTxnId = () => { let ids = []; try { ids = JSON.parse(ls.get("kd-asst-last") || "[]"); } catch (e) {} for (let i = ids.length - 1; i >= 0; i--) if (S.txns.some(t => t.id === ids[i])) return ids[i]; return null; };
+function asTrack(id) { let ids = []; try { ids = JSON.parse(ls.get("kd-asst-last") || "[]"); } catch (e) {} ids.push(id); ls.set("kd-asst-last", JSON.stringify(ids.slice(-30))); }
+
+function asCommit(id) {
+  const d = asReadCard(id); if (!d) return;
+  const m = AS.log.find(x => x.draft === id);
+  const done = html => { delete AS.drafts[id]; if (m) { m.draft = null; m.html = html; m.done = html; } asLogSave(); asRender(); };
+  if (d.kind === "txn") {
+    if (!(d.amount > 0)) return toast("Tutarı yaz.");
+    if (!acc(d.accountId)) return toast("Hesap seç.");
+    const o = { id: uid8(), type: d.type, amount: d.amount, date: d.date || TODAY, accountId: d.accountId, note: d.note || "", src: "asst" };
+    const code = accAsset(acc(o.accountId));
+    if (d.type === "transfer") {
+      if (!acc(d.toAccountId) || d.toAccountId === d.accountId) return toast("Giriş hesabını seç (çıkıştan farklı).");
+      o.toAccountId = d.toAccountId; o.category = "Transfer"; o.contactId = "";
+      const c2 = accAsset(acc(o.toAccountId)); if (c2 !== code) { const r1 = rateOf(code), r2 = rateOf(c2); if (!(r1 && r2)) return toast("Kur bulunamadı; formda aç."); o.toAmount = Math.round(o.amount * r1 / r2 * 1000) / 1000; }
+    } else {
+      o.category = d.category || (d.type === "gelir" ? "Diğer gelir" : "Diğer gider"); o.sub = d.sub || ""; o.contactId = d.contactId || "";
+      const cur = d.cur || code;
+      if (cur !== code) { const r = (rateOf(cur) || 0) / (rateOf(code) || 1); if (!(r > 0)) return toast(`${cur} kuru yok; formda aç.`); const fa = o.amount; o.amount = Math.round(fa * r * 100) / 100; o.fx = { cur, amt: fa, rate: Math.round(o.amount / fa * 10000) / 10000 }; }
+      else if (code !== "TRY") o.rate = rateOf(code) || null;
+      if (d.inst > 1 && d.type === "gider" && isCredit(acc(o.accountId))) o.inst = d.inst;
+    }
+    ls.set("kd-last-acc", o.accountId); put("txns", o); asTrack(o.id);
+    done(`<div class="as-ok">✓ Kaydedildi</div>${asTxnLine(o)}<div class="as-act"><button type="button" class="btn small ghost" data-as="undo" data-txn="${o.id}">↶ Geri al</button><button type="button" class="btn small ghost" data-edit-txn="${o.id}">✎ Düzenle</button></div>`);
+    return;
+  }
+  if (d.kind === "plan") {
+    if (!(d.amount > 0)) return toast("Tutarı yaz."); if (!d.due) return toast("Vade tarihini seç.");
+    const o = { id: uid8(), dir: d.dir, amount: d.amount, due: d.due, contactId: d.contactId || "", category: d.category || "", sub: d.sub || "", repeat: "", remind: 3, note: d.note || "", status: "bekliyor" };
+    put("plans", o); done(`<div class="as-ok">✓ Vadeye eklendi</div><div class="as-line"><span>${d.dir === "tahsilat" ? "📥" : "📤"} <b>${esc(o.note || o.category)}</b><br><small>${esc(dshort(o.due))} · ${d.dir}${o.contactId && con(o.contactId) ? " · " + esc(con(o.contactId).name) : ""}</small></span><b class="num">${money(o.amount)}</b></div>`);
+    return;
+  }
+  const t = S.txns.find(x => x.id === d.txnId); if (!t) return done("<i>Kayıt bulunamadı.</i>");
+  if (d.kind === "del") { remove("txns", t.id); done(`<div class="as-ok">🗑 Silindi</div>${asTxnLine(t)}`); return; }
+  if (d.kind === "edit") { const n = { ...t, ...d.patch }; if (d.patch.amount && t.fx) { const r = t.fx.rate || (t.amount / t.fx.amt); n.fx = { ...t.fx, amt: d.patch.amount }; n.amount = Math.round(d.patch.amount * r * 100) / 100; } put("txns", n); done(`<div class="as-ok">✓ Güncellendi</div>${asTxnLine(n)}`); }
+}
+
+// ---- cevaplar (sorular)
+function asAnswer(r) {
+  const P = r.period, inP = t => t.date >= P.from && t.date <= P.to;
+  const base = t => inP(t) && !isMove(t) && (!r.accountId || t.accountId === r.accountId) && (!r.contactId || t.contactId === r.contactId);
+  const prevRange = () => { const a = pd(P.from), b = pd(P.to), n = Math.round((b - a) / 864e5) + 1; if (P.from.slice(8) === "01") { const pa = new Date(a.getFullYear(), a.getMonth() - 1, 1), pb = new Date(a.getFullYear(), a.getMonth() - 1, Math.min(b.getDate(), new Date(a.getFullYear(), a.getMonth(), 0).getDate())); return [iso(pa), iso(pb)]; } return [addDays(P.from, -n), addDays(P.from, -1)]; };
+  const sc = (r.accountId ? ` · ${esc(accName(acc(r.accountId)))}` : "") + (r.contactId && con(r.contactId) ? ` · ${esc(con(r.contactId).name)}` : "");
+  if (r.q === "spend" || r.q === "income") {
+    const ty = r.q === "spend" ? "gider" : "gelir", f = t => t.type === ty && (!r.category || t.category === r.category);
+    const rows = S.txns.filter(t => base(t) && f(t)), tot = sum(rows, txTRY);
+    const [pa, pb] = prevRange(), prev = sum(S.txns.filter(t => t.type === ty && !isMove(t) && t.date >= pa && t.date <= pb && (!r.category || t.category === r.category) && (!r.accountId || t.accountId === r.accountId)), txTRY);
+    const ch = prev > 0 ? Math.round((tot - prev) / prev * 100) : null;
+    const top = rows.slice().sort((a, b) => txTRY(b) - txTRY(a)).slice(0, 3);
+    return `<b>${esc(P.label[0].toLocaleUpperCase("tr") + P.label.slice(1))}</b>${r.category ? " · " + esc(r.category) : ""}${sc}: <b class="num ${ty === "gider" ? "neg" : "pos"}">${money(tot)}</b> <small>(${rows.length} işlem)</small>${ch != null ? `<br><small>Önceki dönem (${dshort(pa)}–${dshort(pb)}): ${money0(prev)} · <b style="color:var(--${(ch > 0) === (ty === "gider") ? "neg" : "pos"})">${ch > 0 ? "+" : ""}${ch}%</b></small>` : ""}${top.length ? `<div class="as-sub">${top.map(asTxnLine).join("")}</div>` : ""}`;
+  }
+  if (r.q === "top") {
+    const m = {}; S.txns.filter(t => base(t) && t.type === "gider").forEach(t => { m[t.category] = (m[t.category] || 0) + txTRY(t); });
+    const tot = sum(Object.values(m), x => x), L = Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, 6);
+    return L.length ? `<b>${esc(P.label)}</b> en çok harcananlar${sc} (toplam ${money0(tot)}):<ol class="as-ol">${L.map(([c, v]) => `<li><span>${esc(c)}</span><b class="num">${money0(v)}</b><small> %${Math.round(v / tot * 100)}</small></li>`).join("")}</ol>` : `${esc(P.label)} gider yok.`;
+  }
+  if (r.q === "net") {
+    const rows = S.txns.filter(base), inc = sum(rows.filter(t => t.type === "gelir"), txTRY), exp = sum(rows.filter(t => t.type === "gider"), txTRY);
+    return `<b>${esc(P.label)}</b>${sc}: gelir <b class="num pos">${money0(inc)}</b> · gider <b class="num neg">${money0(exp)}</b> · net <b class="num ${inc - exp < 0 ? "neg" : "pos"}">${signed(inc - exp)}</b><br><small>Toplam net pozisyon: ${money0(totalCash())}</small>`;
+  }
+  if (r.q === "balance") {
+    if (r.accountId) { const a = acc(r.accountId); return `<b>${esc(accName(a))}</b> bakiyesi: <b class="num ${balanceOf(a) < 0 ? "neg" : ""}">${esc(fmtAsset(balanceOf(a), accAsset(a)))}</b>`; }
+    return `Net pozisyon: <b class="num">${money0(totalCash())}</b><ol class="as-ol">${accountGroups().map(g => `<li><span>${esc(g.name)}</span><b class="num ${g.total < 0 ? "neg" : ""}">${money0(g.total)}</b></li>`).join("")}</ol><small>Hesap adı yazarsan tek hesabı gösteririm (örn. "bankomat bakiyesi").</small>`;
+  }
+  if (r.q === "debt") {
+    const cards = S.accounts.filter(isCredit).filter(a => !r.accountId || a.id === r.accountId); if (!cards.length) return "Kredi kartı hesabın yok.";
+    const tot = sum(cards, a => Math.max(0, -valueTRY(a)));
+    return `Kart borçları: <b class="num neg">${money(tot)}</b><ol class="as-ol">${cards.map(a => { const D = cardDue(a); return `<li><span>💳 ${esc(accName(a))}${D && D.due ? `<br><small>son ödeme ${dshort(D.due)}${D.rest ? ` · ekstre kalan ${money0(D.rest)}` : ""}${D.minRest ? ` · asgari ${money0(D.minRest)}` : ""}</small>` : ""}</span><b class="num neg">${money(Math.max(0, -balanceOf(a)))}</b></li>`; }).join("")}</ol>`;
+  }
+  if (r.q === "upcoming") {
+    const L = pending().slice().sort((a, b) => a.due < b.due ? -1 : 1).slice(0, 6);
+    return L.length ? `Yaklaşan vadeler:<ol class="as-ol">${L.map(p => `<li><span>${p.dir === "tahsilat" ? "📥" : "📤"} ${esc(p.note || p.category || p.dir)}${p.contactId && con(p.contactId) ? " · " + esc(con(p.contactId).name) : ""}<br><small>${dshort(p.due)}${p.due < TODAY ? " · <b style='color:var(--neg)'>gecikti</b>" : ""}</small></span><b class="num ${p.dir === "tahsilat" ? "pos" : "neg"}">${money0(p.amount)}</b></li>`).join("")}</ol>` : "Bekleyen vade yok.";
+  }
+  return "Bunu henüz cevaplayamıyorum.";
+}
+
+// ---- mesaj işle
+async function asSend(text) {
+  text = String(text || "").trim(); if (!text || AS.busy) return;
+  asPush("me", esc(text));
+  let r = AST.parse(text, asCtx());
+  const ai = aiCfg();
+  if (ai && (r.intent === "unknown" || (r.intent === "add" && r.conf < 0.65))) {
+    AS.busy = true; asRender();
+    try { const x = await aiParse(text, ai); if (x) r = x; } catch (e) { asPush("bot", `<small>Yapay zekâya ulaşılamadı (${esc(String(e.message || e).slice(0, 120))}); yerleşik sonuç kullanılıyor.</small>`); }
+    AS.busy = false;
+  }
+  asHandle(r, text);
+}
+function asHandle(r, text) {
+  if (r.intent === "help") return asHello();
+  if (r.intent === "chat" && r.reply) return asPush("bot", esc(r.reply));
+  if (r.intent === "query") return asPush("bot", asAnswer(r));
+  if (r.intent === "add" || r.intent === "plan") {
+    if (!S.accounts.length && r.intent === "add") return asPush("bot", "Önce bir hesap eklemelisin (Hesaplar → + Hesap).");
+    const id = uid8();
+    AS.drafts[id] = r.intent === "plan" ? { kind: "plan", ...r } : { kind: "txn", ...r, toAccountId: r.toAccountId || (S.accounts.find(a => a.id !== r.accountId) || {}).id };
+    return asPush("bot", "", id);
+  }
+  if (r.intent === "delete-last" || r.intent === "edit-last") {
+    const tid = lastTxnId(); if (!tid) return asPush("bot", "Asistanla eklenmiş bir kayıt bulamadım. Silmek ya da düzeltmek istediğin kayda İşlemler'den dokunabilirsin.");
+    const id = uid8();
+    if (r.intent === "delete-last") AS.drafts[id] = { kind: "del", txnId: tid };
+    else {
+      const t = S.txns.find(x => x.id === tid); let patch = null, label = "";
+      if (r.field === "amount" && r.value > 0) { patch = { amount: r.value }; label = `Tutar: ${t.fx ? fmtAsset(r.value, t.fx.cur) : money(r.value)}`; }
+      if (r.field === "category" && r.value?.category && t.type !== "transfer") { patch = { category: r.value.category, sub: r.value.sub || "" }; label = `Kategori: ${r.value.category}${r.value.sub ? " › " + r.value.sub : ""}`; }
+      if (r.field === "account" && acc(r.value)) { patch = { accountId: r.value }; label = `Hesap: ${accName(acc(r.value))}`; }
+      if (r.field === "date" && r.value) { patch = { date: r.value }; label = `Tarih: ${dshort(r.value)}`; }
+      if (!patch) return asPush("bot", "Neyi değiştireceğimi anlayamadım. Örnek: “250'ydi”, “kategorisi ulaşım olsun”, “hesabı bankomat olsun”, “tarihi dün olsun”.");
+      AS.drafts[id] = { kind: "edit", txnId: tid, patch, label };
+    }
+    return asPush("bot", "", id);
+  }
+  asPush("bot", `Tam anlayamadım. ${aiCfg() ? "" : "Tutarı ve ne olduğunu yazarsan kaydı hazırlarım. "}Örnekler:<div class="as-chips">${AS_EX.slice(0, 5).map(x => `<button type="button" class="chip" data-as-ex="${esc(x)}">${esc(x)}</button>`).join("")}</div>${aiCfg() ? "" : `<small>Serbest cümleleri anlamam için ⚙'den yapay zekâ anahtarı ekleyebilirsin.</small>`}`);
+}
+
+// ---- yapay zekâ (isteğe bağlı): yalnızca mesaj + hesap/kategori/cari adları gönderilir, bakiyeler gönderilmez
+async function aiParse(text, cfg) {
+  const cx = asCtx();
+  const prompt = `Sen bir kişisel muhasebe uygulamasının Türkçe asistanısın. Kullanıcının mesajını SADECE JSON olarak yapılandır.
+Bugün: ${cx.today}
+Hesaplar: ${JSON.stringify(cx.accounts.map(a => ({ id: a.id, ad: (a.group ? a.group + " " : "") + a.name, tur: a.kind })))}
+Gider kategorileri: ${JSON.stringify(cx.cats.gider.map(c => c.s.length ? c.n + " [" + c.s.join(", ") + "]" : c.n))}
+Gelir kategorileri: ${JSON.stringify(cx.cats.gelir.map(c => c.n))}
+Cariler: ${JSON.stringify(cx.contacts)}
+Son kullanılan hesap id: ${cx.lastAcc || "-"}
+Şema (yalnızca biri):
+{"intent":"add","type":"gider|gelir|transfer","amount":sayı,"cur":"TRY|USD|EUR|GBP","date":"YYYY-MM-DD","accountId":"id","toAccountId":"id (transfer)","category":"listeden","sub":"alt kategori ya da boş","contactId":"id ya da boş","note":"kısa açıklama"}
+{"intent":"plan","dir":"ödeme|tahsilat","amount":sayı,"due":"YYYY-MM-DD","category":"","contactId":"","note":""}
+{"intent":"query","q":"spend|income|top|net|balance|debt|upcoming","from":"YYYY-MM-DD","to":"YYYY-MM-DD","label":"bu ay gibi","category":"","accountId":"","contactId":""}
+{"intent":"delete-last"} | {"intent":"edit-last","field":"amount|category|account|date","value":...}
+{"intent":"chat","reply":"kısa Türkçe cevap (kayıt ya da veri gerektirmeyen sorular için)"}
+Kredi kartı borcu ödemesi = banka hesabından karta transfer. Hesap söylenmezse son kullanılanı seç. Tarih söylenmezse bugün.
+Mesaj: ${JSON.stringify(text)}`;
+  let out;
+  if (cfg.p === "claude") {
+    const res = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "x-api-key": cfg.k, "anthropic-version": "2023-06-01", "content-type": "application/json", "anthropic-dangerous-direct-browser-access": "true" }, body: JSON.stringify({ model: cfg.m || AI_MODELS.claude, max_tokens: 500, messages: [{ role: "user", content: prompt }] }) });
+    const j = await res.json(); if (!res.ok) throw new Error(j.error?.message || res.status); out = (j.content || []).map(c => c.text || "").join("");
+  } else {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(cfg.m || AI_MODELS.gemini)}:generateContent?key=${encodeURIComponent(cfg.k)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json", temperature: 0 } }) });
+    const j = await res.json(); if (!res.ok) throw new Error(j.error?.message || res.status); out = j.candidates?.[0]?.content?.parts?.map(p => p.text || "").join("") || "";
+  }
+  const m = out.match(/\{[\s\S]*\}/); if (!m) return null;
+  const r = JSON.parse(m[0]); return aiClean(r, cx);
+}
+function aiClean(r, cx) {
+  const okA = id => cx.accounts.some(a => a.id === id), okC = id => cx.contacts.some(c => c.id === id);
+  const catOk = (ty, c) => (cx.cats[ty === "gelir" || ty === "tahsilat" ? "gelir" : "gider"] || []).find(x => x.n === c);
+  const isoOk = s => /^\d{4}-\d{2}-\d{2}$/.test(s || "");
+  if (r.intent === "add") {
+    const type = ["gider", "gelir", "transfer"].includes(r.type) ? r.type : "gider", amount = +r.amount; if (!(amount > 0)) return null;
+    const c = catOk(type, r.category);
+    return { intent: "add", type, amount, cur: ["TRY", "USD", "EUR", "GBP"].includes(r.cur) ? r.cur : "TRY", date: isoOk(r.date) && r.date <= cx.today ? r.date : cx.today, accountId: okA(r.accountId) ? r.accountId : cx.lastAcc || cx.accounts[0]?.id, accGuessed: !okA(r.accountId), toAccountId: okA(r.toAccountId) ? r.toAccountId : "", category: type === "transfer" ? "Transfer" : c ? c.n : type === "gelir" ? "Diğer gelir" : "Diğer gider", sub: c && c.s.includes(r.sub) ? r.sub : "", contactId: okC(r.contactId) ? r.contactId : "", note: String(r.note || "").slice(0, 80), conf: 0.9, ai: true };
+  }
+  if (r.intent === "plan") { const amount = +r.amount; if (!(amount > 0)) return null; const dir = r.dir === "tahsilat" ? "tahsilat" : "ödeme", c = catOk(dir, r.category); return { intent: "plan", dir, amount, due: isoOk(r.due) ? r.due : "", category: c ? c.n : "", sub: "", contactId: okC(r.contactId) ? r.contactId : "", note: String(r.note || "").slice(0, 80) }; }
+  if (r.intent === "query") { const q = ["spend", "income", "top", "net", "balance", "debt", "upcoming"].includes(r.q) ? r.q : "spend"; const per = isoOk(r.from) && isoOk(r.to) ? { from: r.from, to: r.to, label: r.label || `${r.from} – ${r.to}` } : AST.findPeriod("", cx.today); return { intent: "query", q, period: per, category: catOk(q === "income" ? "gelir" : "gider", r.category) ? r.category : "", accountId: okA(r.accountId) ? r.accountId : "", contactId: okC(r.contactId) ? r.contactId : "" }; }
+  if (r.intent === "delete-last") return { intent: "delete-last" };
+  if (r.intent === "edit-last") { let v = r.value; if (r.field === "amount") v = +v; if (r.field === "category") v = typeof v === "string" ? { category: v, sub: "" } : v; return { intent: "edit-last", field: r.field, value: v }; }
+  if (r.intent === "chat" && r.reply) return { intent: "chat", reply: String(r.reply).slice(0, 600) };
+  return null;
+}
+function asSettings() {
+  const c = aiCfg() || { p: "gemini", k: "", m: "" };
+  asPush("bot", `<div class="as-card" data-card="ai"><b>🤖 Yapay zekâ desteği (isteğe bağlı)</b>
+    <p class="small-note">Yerleşik asistan anlayamadığında mesajı yapay zekâya sorar. Gönderilen: yalnızca <b>mesajın</b>, <b>hesap/kategori/cari adları</b>. Bakiyeler ve işlem geçmişi <b>gönderilmez</b>. Anahtar yalnızca <b>bu cihazda</b> saklanır.</p>
+    <div class="as-grid"><label>Sağlayıcı<select data-f="p"><option value="gemini" ${c.p !== "claude" ? "selected" : ""}>Google Gemini (ücretsiz kotası var)</option><option value="claude" ${c.p === "claude" ? "selected" : ""}>Anthropic Claude</option></select></label>
+    <label>Model (boş = varsayılan)<input data-f="m" value="${esc(c.m || "")}" placeholder="${AI_MODELS.gemini} / ${AI_MODELS.claude}"></label>
+    <label class="wide">API anahtarı<input data-f="k" type="password" autocomplete="off" value="${esc(c.k || "")}" placeholder="Anahtarı buraya yapıştır"></label></div>
+    <p class="small-note">Gemini anahtarı: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> → “Create API key”. Claude: <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>.</p>
+    <div class="as-act"><button type="button" class="btn primary" data-as="ai-save">Kaydet</button>${aiCfg() ? `<button type="button" class="btn" data-as="ai-test">Dene</button><button type="button" class="btn ghost" data-as="ai-del">Anahtarı sil</button>` : ""}</div></div>`);
+}
+function asStopRec() { if (AS.rec) { try { AS.rec.stop(); } catch (e) {} AS.rec = null; } }
+function asMic() {
+  if (AS.rec) { asStopRec(); asRender(); return; }
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SR) return toast("Bu tarayıcı sesle yazmayı desteklemiyor; klavyedeki mikrofonu kullan.");
+  const r = new SR(); r.lang = "tr-TR"; r.interimResults = true; r.maxAlternatives = 1; let fin = "";
+  r.onresult = e => { let s = ""; for (const x of e.results) { s += x[0].transcript; if (x.isFinal) fin = s; } const i = $("#asIn"); if (i) i.value = s; };
+  r.onerror = e => { AS.rec = null; asRender(); if (e.error === "not-allowed") toast("Mikrofon izni kapalı. Tarayıcı ayarlarından izin ver."); else if (e.error !== "no-speech" && e.error !== "aborted") toast("Ses anlaşılamadı: " + e.error); };
+  r.onend = () => { const was = AS.rec; AS.rec = null; const v = fin || $("#asIn")?.value; asRender(); if (was && v) { $("#asIn").value = ""; asSend(v); } };
+  AS.rec = r; asRender(); try { r.start(); } catch (e) { AS.rec = null; asRender(); }
+}
+document.addEventListener("click", e => {
+  if (e.target.closest("#asstBtn")) return asOpen();
+  const root = e.target.closest("#asstRoot"); if (!root) return;
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.asEx) { asSend(b.dataset.asEx); return; }
+  if (b.dataset.asType) { const id = b.closest("[data-card]").dataset.card, d = asReadCard(id); d.type = b.dataset.asType; if (d.type !== "transfer") { const g = AST.parse((d.note || "") + " 1", asCtx()); d.category = g.intent === "add" && g.type === d.type ? g.category : d.type === "gelir" ? "Diğer gelir" : "Diğer gider"; d.sub = g.sub || ""; } return asRender(); }
+  if (b.dataset.asDir) { const id = b.closest("[data-card]").dataset.card, d = asReadCard(id); d.dir = b.dataset.asDir; d.category = ""; return asRender(); }
+  const a = b.dataset.as; if (!a) return;
+  if (a === "close") return asClose();
+  if (a === "clear") { AS.log = []; AS.drafts = {}; asLogSave(); asHello(); return; }
+  if (a === "mic") return asMic();
+  if (a === "settings") return asSettings();
+  if (a === "ok") return asCommit(b.dataset.id);
+  if (a === "cancel") { const m = AS.log.find(x => x.draft === b.dataset.id); delete AS.drafts[b.dataset.id]; if (m) { m.draft = null; m.html = m.done = "<i>İptal edildi.</i>"; } asLogSave(); return asRender(); }
+  if (a === "form") { const d = asReadCard(b.dataset.id); const m = AS.log.find(x => x.draft === b.dataset.id); delete AS.drafts[b.dataset.id]; if (m) { m.draft = null; m.html = m.done = "<i>Formda düzenlemeye açıldı.</i>"; } asLogSave(); asClose();
+    return txnForm({ type: d.type, amount: d.cur && d.cur !== accAsset(acc(d.accountId)) ? "" : d.amount, date: d.date, accountId: d.accountId, toAccountId: d.toAccountId, category: d.category, sub: d.sub, contactId: d.contactId, note: d.note, ...(d.cur && d.cur !== accAsset(acc(d.accountId)) ? { fx: { cur: d.cur, amt: d.amount } } : {}) }); }
+  if (a === "undo") { const t = S.txns.find(x => x.id === b.dataset.txn); if (t) { remove("txns", t.id); b.closest(".as-msg").innerHTML = "<i>↶ Geri alındı.</i>"; const m = AS.log.find(x => x.html.includes(t.id)); if (m) m.html = "<i>↶ Geri alındı.</i>"; asLogSave(); } return; }
+  if (a === "ai-save" || a === "ai-test") {
+    const c = b.closest("[data-card]"), g = n => c.querySelector(`[data-f="${n}"]`).value.trim();
+    if (a === "ai-save") { const k = g("k"); if (!k) return toast("Anahtarı yapıştır."); ls.set("kd-ai", JSON.stringify({ p: g("p"), k, m: g("m") })); toast("Yapay zekâ desteği açık"); }
+    AS.busy = true; asRender();
+    aiParse("dün marketten 123 tl alışveriş", aiCfg()).then(x => { AS.busy = false; asPush("bot", x ? "✓ Yapay zekâ çalışıyor. Artık serbest cümleleri de anlarım." : "Yapay zekâ cevap verdi ama anlaşılamadı; model adını kontrol et."); })
+      .catch(err => { AS.busy = false; asPush("bot", `⚠ Yapay zekâ hatası: ${esc(String(err.message || err).slice(0, 200))}`); });
+    return;
+  }
+  if (a === "ai-del") { ls.set("kd-ai", ""); try { localStorage.removeItem("kd-ai"); } catch (e) {} toast("Anahtar silindi"); asRender(); }
+});
+document.addEventListener("submit", e => { if (e.target.id !== "asForm") return; e.preventDefault(); e.stopPropagation(); const i = $("#asIn"), v = i.value; i.value = ""; asSend(v); }, true);
+document.addEventListener("change", e => { const c = e.target.closest?.("#asstRoot [data-card]"); if (!c || !AS.drafts[c.dataset.card]) return; if (e.target.dataset.f === "cat" || e.target.dataset.f === "acc") { const d = asReadCard(c.dataset.card); if (e.target.dataset.f === "cat") d.sub = ""; asRender(); } });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && AS.open && !$("#ov")) asClose(); });
+asRender(); // ilk render modül sonundan önce olduysa düğmeyi şimdi göster
